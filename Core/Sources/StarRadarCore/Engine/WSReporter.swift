@@ -314,7 +314,8 @@ public final class WSReporter {
             WebSocketTransport(
                 queue: queue,
                 writeTimeout: config.writeTimeout,
-                dialTimeout: config.dialTimeout
+                dialTimeout: config.dialTimeout,
+                diagnostics: { [weak self] line in self?.log("[ws] \(line)") }
             )
         }
         self.log = log

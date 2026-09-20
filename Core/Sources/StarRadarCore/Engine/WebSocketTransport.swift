@@ -15,6 +15,7 @@ final class WebSocketTransport: ReporterTransport {
     private let writeTimeout: TimeInterval
     private let dialTimeout: Int
     private let keepaliveIdle: Int
+    private let diagnostics: ((String) -> Void)?
 
     private var connection: NWConnection?
     private var opened = false
@@ -24,12 +25,14 @@ final class WebSocketTransport: ReporterTransport {
         queue: DispatchQueue,
         writeTimeout: TimeInterval,
         dialTimeout: TimeInterval,
-        keepaliveIdleSeconds: Int = 2
+        keepaliveIdleSeconds: Int = 2,
+        diagnostics: ((String) -> Void)? = nil
     ) {
         self.queue = queue
         self.writeTimeout = writeTimeout
         self.dialTimeout = Int(max(1, dialTimeout.rounded(.up)))
         self.keepaliveIdle = max(1, keepaliveIdleSeconds)
+        self.diagnostics = diagnostics
     }
 
     func connect(host: String, port: UInt16) {
@@ -57,21 +60,30 @@ final class WebSocketTransport: ReporterTransport {
             using: parameters
         )
         self.connection = connection
+        diagnostics?("拨号 \(host):\(port)")
         connection.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             switch state {
             case .ready:
                 guard !self.opened, !self.closed else { return }
                 self.opened = true
+                self.diagnostics?("链路就绪")
                 self.receive()
                 self.onOpen?()
             case .failed(let error):
+                self.diagnostics?("链路失败：\(describeNetworkError(error))")
                 self.finish(describeNetworkError(error))
             case .cancelled:
                 self.finish("连接已取消")
+            case .waiting(let error):
+                // 没路由 / 被系统策略拦下时 iOS 会一直挂在 waiting 重试，
+                // 对外表现就是「拨号超时」—— 把真因透出来，否则只能瞎猜
+                self.diagnostics?("链路受阻：\(describeNetworkError(error))")
+            case .setup:
+                self.diagnostics?("开始建链")
+            case .preparing:
+                self.diagnostics?("TCP 握手中")
             default:
-                // .waiting 交给上报端的拨号超时与写超时裁决：底层自己会重试，
-                // 因为一次路径抖动就掐断反而更难连上
                 break
             }
         }
