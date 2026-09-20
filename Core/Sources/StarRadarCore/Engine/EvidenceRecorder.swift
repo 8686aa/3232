@@ -56,7 +56,8 @@ public struct EvidenceProtector {
 
     /// 从钥匙串取主密钥（没有就现场生成一个）。
     public init() throws {
-        self.init(masterKeyData: try EvidenceProtector.loadOrCreateMasterKey())
+        // `try` 必须盖住整个委托调用，写在参数里不够
+        try self.init(masterKeyData: EvidenceProtector.loadOrCreateMasterKey())
     }
 
     /// 用给定主密钥构造，测试专用。

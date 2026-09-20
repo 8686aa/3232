@@ -119,7 +119,8 @@ public enum SecureWS {
             info: hkdfInfo,
             outputByteCount: 104
         )
-        let bytes = [UInt8](material)
+        // HKDF 产出的是 SymmetricKey，只能走 ContiguousBytes 拿字节
+        let bytes = material.withUnsafeBytes { Array($0) }
         return SessionKeys(
             c2sKey: Array(bytes[0..<32]),
             s2cKey: Array(bytes[32..<64]),
@@ -242,7 +243,7 @@ public final class SecureChannel {
         sendSeq = seq
         let sealed = [UInt8](box.ciphertext) + [UInt8](box.tag)
         return "{\"type\":\"enc\",\"v\":\(SecureWS.version),\"seq\":\(seq),"
-            + "\"d\":\"\(sealed.base64EncodedString())\"}"
+            + "\"d\":\"\(Data(sealed).base64EncodedString())\"}"
     }
 
     public func encrypt(_ plaintext: String) throws -> String {
