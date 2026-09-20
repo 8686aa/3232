@@ -137,8 +137,9 @@ final class WebSocketWireTests: XCTestCase {
 
     func testDecodesMultipleFramesInOneChunk() {
         var decoder = WebSocketFrameDecoder()
+        // 三个 fin+text 帧各带 1 字节载荷：长度字节是 0x01，'a'/'b'/'c' 才是载荷
         XCTAssertEqual(
-            decoder.append([0x81, 0x61, 0x81, 0x62, 0x81, 0x63]),
+            decoder.append([0x81, 0x01, 0x61, 0x81, 0x01, 0x62, 0x81, 0x01, 0x63]),
             [.text("a"), .text("b"), .text("c")]
         )
     }
@@ -148,5 +149,10 @@ final class WebSocketWireTests: XCTestCase {
         var decoder = WebSocketFrameDecoder()
         let frame: [UInt8] = [0x82, 127, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
         XCTAssertEqual(decoder.append(frame), [])
+
+        // 最高位是 1 时左移出来是负数，只比上界会漏过去，后面会构造反向区间崩掉
+        var negative = WebSocketFrameDecoder()
+        let bogus: [UInt8] = [0x82, 127, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+        XCTAssertEqual(negative.append(bogus), [])
     }
 }

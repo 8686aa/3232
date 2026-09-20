@@ -445,7 +445,9 @@ struct WebSocketFrameDecoder {
             cursor += 8
         }
 
-        guard length <= Self.maxPayload else {
+        // 127 分支的 8 字节长度最高位可能是 1（RFC 禁用，但得防），左移后是负数，
+        // 只比上界会让它漏过去，接着就会构造出 cursor..<(cursor-1) 这种反向区间
+        guard length >= 0, length <= Self.maxPayload else {
             // 长度离谱，缓冲丢掉，让上层去重连
             buffer.removeAll()
             return nil
