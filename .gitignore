@@ -1,0 +1,16 @@
+# XcodeGen 现场生成，不入库
+StarRadar.xcodeproj/
+*.xcodeproj
+*.xcworkspace
+
+# 构建产物
+build/
+DerivedData/
+.swiftpm/
+Payload/
+*.ipa
+*.xcarchive
+
+# Xcode 本地状态
+xcuserdata/
+*.xcuserstate
