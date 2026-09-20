@@ -105,6 +105,14 @@ public struct TGCPFrame {
         out.append(contentsOf: payload)
         return out
     }
+
+    /// 换掉报文体但仍保持帧结构，头里的 body_len 同步回写。
+    /// 中间人重加密后要拿到「一个改过 body 的帧」而不是裸字节，故与 `packed` 区分开。
+    public func replacingBody(_ newBody: [UInt8]) -> TGCPFrame {
+        var newHeader = header
+        ByteCoding.writeUInt32BE(UInt32(newBody.count), into: &newHeader, at: TGCP.bodyLengthOffset)
+        return TGCPFrame(header: newHeader, body: newBody, streamOffset: streamOffset)
+    }
 }
 
 /// DH 公钥在头里的位置与取值
@@ -147,9 +155,9 @@ extension TGCP {
             throw TGCPError.invalidPublicLength(replacement.count)
         }
         var out = header
-        writeUInt16BE(UInt16(replacement.count), into: &out, at: extensionOffset + 1)
+        ByteCoding.writeUInt16BE(UInt16(replacement.count), into: &out, at: extensionOffset + 1)
         out.replaceSubrange(field.range, with: replacement)
-        writeUInt32BE(UInt32(out.count), into: &out, at: headerLengthOffset)
+        ByteCoding.writeUInt32BE(UInt32(out.count), into: &out, at: headerLengthOffset)
         return out
     }
 }

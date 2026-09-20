@@ -8,6 +8,10 @@ options:
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
+  # XcodeGen 默认 projectFormat 是 xcode16_0（objectVersion 77），runner 上的
+  # Xcode 15.4 打不开，会报 "future Xcode project file format (77)"。
+  # 降到 xcode15_3，新旧 Xcode 都能读。
+  projectFormat: xcode15_3
 
 packages:
   StarRadarCore:

@@ -172,6 +172,6 @@ public final class MiddlemanSession {
         let result = try NativeAES.translate(body: frame.body, source: source, destination: destination)
         counter.update { $0.translatedFrames += 1 }
         onPlaintext?(direction, frame, result.plain)
-        return frame.packed(body: result.cipher)
+        return frame.replacingBody(result.cipher)
     }
 }
