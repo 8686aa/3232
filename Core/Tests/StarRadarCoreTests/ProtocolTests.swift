@@ -299,8 +299,9 @@ final class MiddlemanSessionTests: XCTestCase {
                 direction: .clientToServer
             )
         )
-        let clientKey = try XCTUnwrap(
-            clientSide.deriveKey(peerPublic: try TGCP.parseDHPublic(header: forwarded.header).value)
+        // 真服务端收到的是中间人冒充「客户端」的那份公钥，用它才能算出和中间人一致的 serverKey
+        let serverKey = try XCTUnwrap(
+            serverSide.deriveKey(peerPublic: try TGCP.parseDHPublic(header: forwarded.header).value)
         )
 
         let returned = try singleFrame(
@@ -309,8 +310,9 @@ final class MiddlemanSessionTests: XCTestCase {
                 direction: .serverToClient
             )
         )
-        let serverKey = try XCTUnwrap(
-            serverSide.deriveKey(peerPublic: try TGCP.parseDHPublic(header: returned.header).value)
+        // 反过来，真客户端收到的是中间人冒充「服务端」的那份公钥
+        let clientKey = try XCTUnwrap(
+            clientSide.deriveKey(peerPublic: try TGCP.parseDHPublic(header: returned.header).value)
         )
 
         // c2s：客户端密文进，服务端密钥能解的密文出

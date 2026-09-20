@@ -82,7 +82,9 @@ final class EngineViewModel: ObservableObject {
     private func startPolling() {
         pollTimer?.invalidate()
         let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refreshFromEngine() }
+            // 先解包成不可变捕获：直接写 self? 会被判成「并发代码里引用可变捕获的 self」
+            guard let self else { return }
+            Task { @MainActor in self.refreshFromEngine() }
         }
         pollTimer = timer
     }
