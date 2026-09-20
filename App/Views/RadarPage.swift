@@ -109,11 +109,36 @@ private final class WebBox {
 
 private struct RadarWebView: UIViewRepresentable {
     let url: URL
+    /// 每次「前往」自增。光比地址不够：地址没变、但用户就是想重载（白屏后重试）时，
+    /// 只比 url 会把这次点击当成「例行刷新」吞掉，界面上就是「点了没反应」。
+    let token: Int
     let box: WebBox
 
-    final class Coordinator {
-        /// 记录已加载的地址，用于区分「地址栏变更」和「SwiftUI 例行刷新」
+    /// 既是 SwiftUI 的 Coordinator，也当 WKNavigationDelegate。
+    /// 加代理只为一件事：把加载失败写进日志 —— WKWebView 的失败默认是静默的，
+    /// 界面只表现为「没反应」，事后无从判断是压根没发起加载、还是加载挂了。
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        /// 记录已加载的地址 + 版本号，用于区分「用户主动加载」和「SwiftUI 例行刷新」
         var loadedURL: URL?
+        var loadedToken = Int.min
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            RadarRouter.shared.log?("[雷达] 正在加载 \(webView.url?.absoluteString ?? "")")
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
+                     withError error: Error) {
+            RadarRouter.shared.log?("[雷达] 加载失败：\(error.localizedDescription)")
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            RadarRouter.shared.log?("[雷达] 加载失败：\(error.localizedDescription)")
+        }
+
+        /// 内存吃紧时系统会回收网页内容进程，表现就是整页空白、之后点哪都没反应
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            RadarRouter.shared.log?("[雷达] 网页进程被系统回收，点刷新可重载")
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -122,16 +147,20 @@ private struct RadarWebView: UIViewRepresentable {
         let w = WKWebView()
         w.isOpaque = false
         w.backgroundColor = .clear
+        w.navigationDelegate = context.coordinator
         box.web = w
         context.coordinator.loadedURL = url
+        context.coordinator.loadedToken = token
         w.load(URLRequest(url: url))
         return w
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        // 只有地址栏真的改过才重新加载，否则每次界面刷新都会把页面重载一遍
-        guard context.coordinator.loadedURL != url else { return }
+        // 只有用户主动改过地址或点了「前往」才重新加载，
+        // 否则每次界面刷新都会把页面重载一遍（3D 视图的镜头会被重置掉）
+        guard context.coordinator.loadedURL != url || context.coordinator.loadedToken != token else { return }
         context.coordinator.loadedURL = url
+        context.coordinator.loadedToken = token
         uiView.load(URLRequest(url: url))
     }
 }
@@ -143,11 +172,13 @@ struct RadarTabPage: View {
     @AppStorage("radar_url") private var urlText: String = radarDefaultURL
     /// 当前已加载的地址
     @State private var url = URL(string: radarDefaultURL)!
+    /// 「前往」的版本号：同一地址重复点也要真的重载，详见 RadarWebView.token
+    @State private var loadToken = 0
 
     var body: some View {
         VStack(spacing: 0) {
             addressBar
-            RadarWebView(url: url, box: box)
+            RadarWebView(url: url, token: loadToken, box: box)
         }
         .background(P.color(P.BG0))
         .onAppear {
@@ -214,15 +245,21 @@ struct RadarTabPage: View {
         if !t.lowercased().hasPrefix("http://") && !t.lowercased().hasPrefix("https://") {
             t = "http://" + t
         }
-        guard let u = URL(string: t), u.host != nil else { return }
+        guard let u = URL(string: t), u.host != nil else {
+            RadarRouter.shared.log?("[雷达] 地址无法解析：\(t)")
+            return
+        }
         urlText = u.absoluteString   // 回填规范化后的地址
         url = u
+        loadToken += 1               // 地址没变也要真加载一次（白屏后重复点「前往」即重试）
     }
 
     /// 载入外部请求的地址；请求未带地址时沿用当前地址（只做跳转，不重载）
     private func open(_ req: RadarOpenRequest) {
         guard let text = req.url, let u = URL(string: text), u.host != nil else { return }
         urlText = u.absoluteString
+        // 地址没变就不重载：切 Tab 会重放一次同一个请求，不能把已经渲染好的页面刷掉
+        if u != url { loadToken += 1 }
         url = u
     }
 }
