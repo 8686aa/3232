@@ -54,6 +54,13 @@ final class EvidenceRecorderTests: XCTestCase {
         Hex.encode(SHA256.hash(data: Data(text.utf8)))
     }
 
+    /// 落盘内容里是否出现过一整段 `byte` 重复 `count` 次的序列
+    private func containsRun(_ bytes: [UInt8], byte: UInt8, count: Int) -> Bool {
+        guard count > 0, bytes.count >= count else { return false }
+        return bytes.indices.dropLast(count - 1)
+            .contains { Array(bytes[$0..<($0 + count)]) == [UInt8](repeating: byte, count: count) }
+    }
+
     private func candidate(
         session: String = "s1",
         material: [UInt8] = [UInt8](repeating: 0x11, count: 128),
@@ -125,7 +132,8 @@ final class EvidenceRecorderTests: XCTestCase {
         let raw = [UInt8](try Data(contentsOf: url))
         // 8 字节 magic 后面直接跟保护后的数据，且不能用明文认出材料
         XCTAssertEqual(Array(raw.prefix(8)), Array(EvidenceRecorder.candidateMagic.utf8))
-        XCTAssertFalse(raw.contains(0x11))
+        // 密文里偶然撞上单个 0x11 很正常，但不可能出现一整段连续的明文材料
+        XCTAssertFalse(containsRun(raw, byte: 0x11, count: 16))
 
         let evidence = try EvidenceRecorder.readCandidate(at: url, protector: try makeProtector())
         XCTAssertEqual(evidence.schema, 1)
