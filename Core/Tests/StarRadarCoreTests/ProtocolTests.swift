@@ -563,3 +563,237 @@ final class MaterialExtractorTests: XCTestCase {
         XCTAssertEqual(layers.map(\.name), ["plain"])
     }
 }
+
+final class HexCodingTests: XCTestCase {
+    func testRoundTripOverEveryByte() {
+        let bytes = (0...255).map { UInt8($0) }
+        XCTAssertEqual(Hex.encode(bytes).count, 512)
+        XCTAssertEqual(Hex.decode(Hex.encode(bytes)), bytes)
+        XCTAssertEqual(Hex.encode([0x00, 0x0F, 0xFF]), "000fff", "必须小写")
+    }
+
+    func testDecodeRejectsMalformedInput() {
+        XCTAssertNil(Hex.decode("0fF"), "奇数长度不该成功")
+        XCTAssertNil(Hex.decode("0g"))
+        XCTAssertNil(Hex.decode(" "))
+        // 全角 ａ 是 3 字节 UTF-8，`Character.isHexDigit` 会放它过去，这里必须挡住
+        XCTAssertNil(Hex.decode("ａ1"))
+    }
+
+    func testSingleCharacterValue() {
+        XCTAssertEqual(Hex.value(of: UInt8(ascii: "0")), 0)
+        XCTAssertEqual(Hex.value(of: UInt8(ascii: "9")), 9)
+        XCTAssertEqual(Hex.value(of: UInt8(ascii: "a")), 10)
+        XCTAssertEqual(Hex.value(of: UInt8(ascii: "F")), 15)
+        XCTAssertNil(Hex.value(of: UInt8(ascii: "g")))
+        XCTAssertNil(Hex.value(of: UInt8(ascii: " ")))
+    }
+}
+
+/// StarRadarSecureWS v1 的黄金向量，整组取自协议文档 §10（对 C# 服务端真实跑通的记录）。
+///
+/// 这组断言是跨端一致性的最后一道闸：常量、字节拼接顺序、AAD 里的方向、seq 起算点，
+/// 任意一处写错都会立刻红 —— 而且**必须是逐字节相等**，不能只验「能自己解开自己」。
+final class SecureWSTests: XCTestCase {
+    private let apiKey = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+    private let clientNonce = Array(UInt8(0)...UInt8(31))
+    private let serverNonce = Array(UInt8(32)...UInt8(63))
+
+    private let roomIDHex = "9aeffe665ff5a6c27aa851d6a471b8c2a09950ec58bd92d58ea733463b4aa000"
+    private let c2sKeyHex = "e4585cd93bdad6bf2988bfd056365e94ca015b005da2fa546eacbd135db6a0c9"
+    private let s2cKeyHex = "a6fadafa797481bb0be715df7e2c5b90bfaf0a32489c6786a61ac0b87e8d66ad"
+    private let c2sIVHex = "07c9791b"
+    private let s2cIVHex = "6e901751"
+    private let proofKeyHex = "a2505fe9090d4dc01eff91b9d596114ee6e6ed2419bf875f5416ebbd452f7666"
+    private let serverProofHex = "1f1512bc6e288e9536c9decd20f246f4a2dbd26bf746096ea9b81833206b6947"
+    private let clientProofHex = "857fdff64d93806f73a9540b469b3799b12f1334941ff697dd4c9f6d293c9da6"
+
+    /// 服务端 → 客户端，s2c_key / seq=1
+    private let downEnvelope = "{\"type\":\"enc\",\"v\":1,\"seq\":1,\"d\":\"Qud1Zkc9aLl6Zc7awxoxHSZPH53svqbhtwHeAKK8Iswe2oK2yIw9LLXw\"}"
+    /// 客户端 → 服务端，c2s_key / seq=2（seq=1 被 secure_finish 占掉了）
+    private let upEnvelope = "{\"type\":\"enc\",\"v\":1,\"seq\":2,\"d\":\"gtug30e65U/hRjUrAW0cLOsTFWqm+EDtdW/w232jD+SIItVmfLlaBtyraHt3oNgBFUCLDRnj8o1EzZEUpq2ssPeg\"}"
+    private let batchPlaintext = "{\"batch\":[{\"data\":\"AA==\",\"k\":\"471fb943aa23c511\"}]}"
+
+    private func goldenKeys() throws -> SecureWS.SessionKeys {
+        try SecureWS.deriveKeys(apiKey: apiKey, clientNonce: clientNonce, serverNonce: serverNonce)
+    }
+
+    func testRoomIDMatchesGoldenVector() throws {
+        XCTAssertEqual(SecureWS.roomID(apiKey), roomIDHex)
+    }
+
+    func testKeyDerivationMatchesGoldenVector() throws {
+        let keys = try goldenKeys()
+        XCTAssertEqual(Hex.encode(keys.c2sKey), c2sKeyHex)
+        XCTAssertEqual(Hex.encode(keys.s2cKey), s2cKeyHex)
+        XCTAssertEqual(Hex.encode(keys.c2sIV), c2sIVHex)
+        XCTAssertEqual(Hex.encode(keys.s2cIV), s2cIVHex)
+        XCTAssertEqual(Hex.encode(keys.proofKey), proofKeyHex)
+        XCTAssertEqual(keys.c2sKey.count, 32)
+        XCTAssertEqual(keys.c2sIV.count, 4, "帧 nonce 前 4 字节")
+    }
+
+    func testTranscriptAndProofsMatchGoldenVector() throws {
+        let keys = try goldenKeys()
+        let transcript = SecureWS.buildTranscript(
+            room: SecureWS.roomID(apiKey),
+            clientNonce: clientNonce,
+            serverNonce: serverNonce
+        )
+        XCTAssertEqual(
+            transcript,
+            "StarRadarSecureWS1|\(roomIDHex)|\(Hex.encode(clientNonce))|\(Hex.encode(serverNonce))"
+        )
+        XCTAssertEqual(SecureWS.buildProof(keys: keys, transcript: transcript, side: "server"), serverProofHex)
+        XCTAssertEqual(SecureWS.buildProof(keys: keys, transcript: transcript, side: "client"), clientProofHex)
+    }
+
+    /// 加密必须逐字节复现文档里的两条信封 —— AES-GCM 在 key/nonce/AAD 固定的前提下
+    /// 是确定性的，所以这条比「自己加密自己能解开」强得多，能一次锁死 AAD 与 IV 拼接
+    func testEncryptReproducesGoldenEnvelopes() throws {
+        let keys = try goldenKeys()
+
+        let downstream = try SecureChannel(keys: keys, outboundDir: SecureWS.dirS2C)
+        XCTAssertEqual(try downstream.encrypt("{\"type\":\"secure_ok\",\"v\":1}"), downEnvelope)
+
+        // 上行：seq=1 归 secure_finish，batch 排在 seq=2
+        let upstream = try SecureChannel(keys: keys, outboundDir: SecureWS.dirC2S)
+        _ = try upstream.encrypt("{\"type\":\"secure_finish\",\"v\":1,\"proof\":\"\(clientProofHex)\"}")
+        XCTAssertEqual(try upstream.encrypt(batchPlaintext), upEnvelope)
+    }
+
+    func testDecryptGoldenEnvelopes() throws {
+        let keys = try goldenKeys()
+        // 客户端视角：出站 c2s，因此入站方向自动是 s2c
+        let channel = try SecureChannel(keys: keys, outboundDir: SecureWS.dirC2S)
+
+        let ok = try channel.decryptObject(downEnvelope)
+        XCTAssertEqual(ok["type"]?.stringValue, "secure_ok")
+        XCTAssertEqual(ok["v"]?.intValue, 1)
+        XCTAssertEqual(channel.receivedCount, 1)
+    }
+
+    /// 服务端视角（出站 s2c，入站 c2s）才能解上行帧，且解完是那条 batch
+    func testDecryptUpstreamBatchFromServerSideChannel() throws {
+        let keys = try goldenKeys()
+        let channel = try SecureChannel(keys: keys, outboundDir: SecureWS.dirS2C)
+
+        // 服务端这里也有一条 seq=1 的下行（secure_ok），先占掉才能轮到 seq=2
+        _ = try channel.encrypt("{\"type\":\"secure_ok\",\"v\":1}")
+        let batch = try channel.decryptObject(upEnvelope)
+        XCTAssertEqual(batch["batch"]?.elements?.count, 1)
+        XCTAssertEqual(batch["batch"]?.elements?.first?["data"]?.stringValue, "AA==")
+        XCTAssertEqual(batch["batch"]?.elements?.first?["k"]?.stringValue, "471fb943aa23c511")
+    }
+
+    /// 抗反射：把上行帧原样反射回来，方向写进了 AAD，必须解不开
+    func testReflectedFrameIsRejected() throws {
+        let keys = try goldenKeys()
+        let channel = try SecureChannel(keys: keys, outboundDir: SecureWS.dirC2S)
+        // 先吃掉下行 seq=1 把 recvSeq 推到 1，反射帧的 seq=2 才通得过序号校验，
+        // 从而真的走到 GCM 认证那一步（否则只会以「seq 错」收场，测不到反射防护）
+        _ = try channel.decrypt(downEnvelope)
+        XCTAssertThrowsError(try channel.decrypt(upEnvelope)) { error in
+            guard case SecureWSError.frameAuthenticationFailed = error else {
+                return XCTFail("反射帧应因方向不符被拒，实际：\(error)")
+            }
+        }
+    }
+
+    /// 抗篡改：密文改一个字节就 InvalidTag
+    func testTamperedFrameIsRejected() throws {
+        let keys = try goldenKeys()
+        let channel = try SecureChannel(keys: keys, outboundDir: SecureWS.dirC2S)
+        _ = try channel.decrypt(downEnvelope)
+
+        let document = try XCTUnwrap(JSONValue.parseObject(upEnvelope))
+        let encoded = try XCTUnwrap(document["d"]?.stringValue)
+        var sealed = [UInt8](try XCTUnwrap(Data(base64Encoded: encoded)))
+        sealed[3] ^= 0x01
+        let forged = "{\"type\":\"enc\",\"v\":1,\"seq\":2,\"d\":\"\(Data(sealed).base64EncodedString())\"}"
+
+        XCTAssertThrowsError(try channel.decrypt(forged)) { error in
+            guard case SecureWSError.frameAuthenticationFailed = error else {
+                return XCTFail("被篡改的帧应认证失败，实际：\(error)")
+            }
+        }
+    }
+
+    /// 序号校验必须早于解密，否则「seq 不连续」和「被篡改」两件事分不开
+    func testSequenceIsCheckedBeforeDecryption() throws {
+        let keys = try goldenKeys()
+        let channel = try SecureChannel(keys: keys, outboundDir: SecureWS.dirC2S)
+        XCTAssertThrowsError(try channel.decrypt(upEnvelope)) { error in
+            guard case SecureWSError.invalidSequence(let expected, let received) = error else {
+                return XCTFail("首帧即 seq=2 应先报序号错，实际：\(error)")
+            }
+            XCTAssertEqual(expected, 1)
+            XCTAssertEqual(received, 2)
+        }
+    }
+
+    func testClientHandshakeSendsGoldenHelloAndFinish() throws {
+        let handshake = try SecureClientHandshake(apiKey: apiKey, clientNonce: clientNonce)
+
+        let hello = try XCTUnwrap(JSONValue.parseObject(handshake.hello()))
+        XCTAssertEqual(hello["type"]?.stringValue, "secure_hello")
+        XCTAssertEqual(hello["v"]?.intValue, 1)
+        XCTAssertEqual(hello["api_key"]?.stringValue, apiKey)
+        XCTAssertEqual(hello["nonce"]?.stringValue, Hex.encode(clientNonce))
+
+        let challenge = "{\"type\":\"secure_challenge\",\"v\":1,"
+            + "\"nonce\":\"\(Hex.encode(serverNonce))\",\"proof\":\"\(serverProofHex)\"}"
+        let (channel, finish) = try handshake.acceptChallenge(challenge)
+
+        let finishDocument = try XCTUnwrap(JSONValue.parseObject(finish))
+        XCTAssertEqual(finishDocument["type"]?.stringValue, "secure_finish")
+        XCTAssertEqual(finishDocument["proof"]?.stringValue, clientProofHex)
+
+        // 握手拿到的通道正好能解第 ④ 步的 secure_ok
+        XCTAssertEqual(try channel.decryptObject(downEnvelope)["type"]?.stringValue, "secure_ok")
+    }
+
+    /// 服务端 proof 不对就必须停下 —— 否则后面对着一把「双方不一致的密钥」继续发密文，
+    /// 服务端只会当成认证失败断开，现场看不到任何「密钥错了」的线索
+    func testClientHandshakeRejectsBadServerProof() throws {
+        let handshake = try SecureClientHandshake(apiKey: apiKey, clientNonce: clientNonce)
+        let bad = "{\"type\":\"secure_challenge\",\"v\":1,"
+            + "\"nonce\":\"\(Hex.encode(serverNonce))\","
+            + "\"proof\":\"\(String(repeating: "0", count: 64))\"}"
+        XCTAssertThrowsError(try handshake.acceptChallenge(bad)) { error in
+            guard case SecureWSError.serverProofRejected = error else {
+                return XCTFail("应报服务端证明不通过，实际：\(error)")
+            }
+        }
+    }
+
+    func testHandshakeRejectsReplayOfChallenge() throws {
+        let handshake = try SecureClientHandshake(apiKey: apiKey, clientNonce: clientNonce)
+        let challenge = "{\"type\":\"secure_challenge\",\"v\":1,"
+            + "\"nonce\":\"\(Hex.encode(serverNonce))\",\"proof\":\"\(serverProofHex)\"}"
+        _ = try handshake.acceptChallenge(challenge)
+        XCTAssertThrowsError(try handshake.acceptChallenge(challenge)) { error in
+            guard case SecureWSError.handshakeAlreadyDone = error else {
+                return XCTFail("同一次握手不该被复用，实际：\(error)")
+            }
+        }
+    }
+
+    func testNormalizeAPIKeyAcceptsUppercaseAndRejectsNonASCII() throws {
+        XCTAssertEqual(try SecureWS.normalizeAPIKey("A1B2C3D4E5F60718293A4B5C6D7E8F90"), apiKey)
+        XCTAssertEqual(try SecureWS.normalizeAPIKey("  \(apiKey)\n"), apiKey)
+        XCTAssertThrowsError(try SecureWS.normalizeAPIKey("a1b2c3d4e5f60718293a4b5c6d7e8f9"), "31 位")
+        XCTAssertThrowsError(try SecureWS.normalizeAPIKey("g1b2c3d4e5f60718293a4b5c6d7e8f90"), "含非 hex")
+        XCTAssertThrowsError(try SecureWS.normalizeAPIKey("Ａ1b2c3d4e5f60718293a4b5c6d7e8f9"), "全角 Ａ")
+    }
+
+    func testDecodeNonceRequiresSixtyFourHexChars() throws {
+        XCTAssertEqual(try SecureWS.decodeNonce(Hex.encode(serverNonce), name: "服务端 nonce"), serverNonce)
+        XCTAssertThrowsError(try SecureWS.decodeNonce(nil, name: "服务端 nonce"))
+        XCTAssertThrowsError(try SecureWS.decodeNonce("00", name: "服务端 nonce"), "长度不足")
+        XCTAssertThrowsError(
+            try SecureWS.decodeNonce(String(repeating: "z", count: 64), name: "服务端 nonce"),
+            "非 hex"
+        )
+    }
+}
