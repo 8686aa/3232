@@ -33,7 +33,7 @@ final class EvidenceRecorderTests: XCTestCase {
     }
 
     private func makeRecorder(
-        room: Int = 158,
+        room: Int = 7,
         maxBytes: Int = EvidenceRecorder.defaultMaxBytes,
         server: String = "123.99.198.158"
     ) throws -> EvidenceRecorder {
@@ -130,7 +130,7 @@ final class EvidenceRecorderTests: XCTestCase {
         let evidence = try EvidenceRecorder.readCandidate(at: url, protector: try makeProtector())
         XCTAssertEqual(evidence.schema, 1)
         XCTAssertEqual(evidence.server, "123.99.198.158")
-        XCTAssertEqual(evidence.room, 158)
+        XCTAssertEqual(evidence.room, 7)
         XCTAssertEqual(evidence.generation.count, 32)
         XCTAssertEqual(evidence.session, "s1")
         XCTAssertEqual(evidence.upstream, Endpoint(host: "10.0.0.9", port: 65010))
@@ -315,7 +315,7 @@ final class EvidenceRecorderTests: XCTestCase {
         try recorder.close(captureDrops: 3)
 
         let summary = try json(root.appendingPathComponent("summary.json"))
-        XCTAssertEqual(summary["room"] as? Int, 158)
+        XCTAssertEqual(summary["room"] as? Int, 7)
         XCTAssertEqual(summary["server"] as? String, "123.99.198.158")
         XCTAssertEqual(summary["candidate_count"] as? Int, 1)
         XCTAssertEqual(summary["udp_packets"] as? Int, 1)
@@ -393,7 +393,7 @@ final class EvidenceRecorderTests: XCTestCase {
     func testRecorderRefusesToStartWhenProtectionFails() throws {
         let recorder = try makeRecorder()
         // 用另一把主密钥去读，等同于「解不开自己刚封的数据」
-        XCTAssertEqual(recorder.room, 158)
+        XCTAssertEqual(recorder.room, 7)
         let wrong = try EvidenceProtector(masterKeyData: Data(repeating: 0x01, count: 32))
         let url = root.appendingPathComponent("udp.pcap")
         XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))

@@ -678,8 +678,12 @@ final class SecureWSTests: XCTestCase {
         let keys = try goldenKeys()
         let channel = try SecureChannel(keys: keys, outboundDir: SecureWS.dirS2C)
 
-        // 服务端这里也有一条 seq=1 的下行（secure_ok），先占掉才能轮到 seq=2
-        _ = try channel.encrypt("{\"type\":\"secure_ok\",\"v\":1}")
+        // 服务端入站方向是 c2s：得先收下客户端的 secure_finish（c2s seq=1）把 recvSeq 推到 1，
+        // 后面那条 c2s seq=2 的 batch 才通得过序号校验。这里用同一个 key 现造一条，
+        // 加密是确定性的，等价于客户端真发的那条 finish。
+        let finish = try SecureChannel(keys: keys, outboundDir: SecureWS.dirC2S)
+            .encrypt("{\"type\":\"secure_finish\",\"v\":1,\"proof\":\"\(clientProofHex)\"}")
+        _ = try channel.decryptObject(finish)
         let batch = try channel.decryptObject(upEnvelope)
         XCTAssertEqual(batch["batch"]?.elements?.count, 1)
         XCTAssertEqual(batch["batch"]?.elements?.first?["data"]?.stringValue, "AA==")

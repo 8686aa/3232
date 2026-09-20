@@ -35,7 +35,7 @@ final class CandidateStoreTests: XCTestCase {
     }
 
     private func store(
-        room: Int = 158,
+        room: Int = 7,
         generation: String = "g1",
         maxCandidates: Int = CandidateStore.defaultMaxCandidates,
         ttl: Double = CandidateStore.defaultTTL,
@@ -89,20 +89,20 @@ final class CandidateStoreTests: XCTestCase {
         let store = try store()
         let broken = candidate(material: [1, 2, 3])
 
-        XCTAssertFalse(try store.accept(broken, room: 159, generation: "g1"))
-        XCTAssertFalse(try store.accept(broken, room: 158, generation: "g2"))
+        XCTAssertFalse(try store.accept(broken, room: 8, generation: "g1"))
+        XCTAssertFalse(try store.accept(broken, room: 7, generation: "g2"))
         XCTAssertEqual(store.status().candidateCount, 0)
     }
 
     func testRejectsInvalidRawDHMaterial() throws {
         let store = try store()
 
-        XCTAssertThrowsError(try store.accept(candidate(session: ""), room: 158, generation: "g1")) {
+        XCTAssertThrowsError(try store.accept(candidate(session: ""), room: 7, generation: "g1")) {
             XCTAssertEqual($0 as? CandidateStore.StoreError, .invalidRawDHCandidateMaterial)
         }
         for count in [0, 16, 127, 129] {
             let bytes = [UInt8](repeating: 9, count: count)
-            XCTAssertThrowsError(try store.accept(candidate(material: bytes), room: 158, generation: "g1")) {
+            XCTAssertThrowsError(try store.accept(candidate(material: bytes), room: 7, generation: "g1")) {
                 XCTAssertEqual($0 as? CandidateStore.StoreError, .invalidRawDHCandidateMaterial)
             }
         }
@@ -112,17 +112,17 @@ final class CandidateStoreTests: XCTestCase {
     func testAcceptsAndDeduplicatesByIdentity() throws {
         let store = try store()
 
-        XCTAssertTrue(try store.accept(candidate(), room: 158, generation: "g1"))
+        XCTAssertTrue(try store.accept(candidate(), room: 7, generation: "g1"))
         // 同会话同材料：再去一次是重复
-        XCTAssertFalse(try store.accept(candidate(), room: 158, generation: "g1"))
+        XCTAssertFalse(try store.accept(candidate(), room: 7, generation: "g1"))
         // 同材料但不同会话：各算一条
-        XCTAssertTrue(try store.accept(candidate(session: "s2"), room: 158, generation: "g1"))
+        XCTAssertTrue(try store.accept(candidate(session: "s2"), room: 7, generation: "g1"))
         // 同会话但材料不同：也算一条
-        XCTAssertTrue(try store.accept(candidate(material: material(8)), room: 158, generation: "g1"))
+        XCTAssertTrue(try store.accept(candidate(material: material(8)), room: 7, generation: "g1"))
 
         XCTAssertEqual(store.status().candidateCount, 3)
-        XCTAssertEqual(store.forSession("s1", room: 158, generation: "g1").count, 2)
-        XCTAssertEqual(store.forSession("s2", room: 158, generation: "g1").count, 1)
+        XCTAssertEqual(store.forSession("s1", room: 7, generation: "g1").count, 2)
+        XCTAssertEqual(store.forSession("s2", room: 7, generation: "g1").count, 1)
     }
 
     /// 超限淘汰的是**最早进来**的那条，不是按创建时间
@@ -130,16 +130,16 @@ final class CandidateStoreTests: XCTestCase {
         let clock = FakeClock()
         let store = try store(maxCandidates: 2, clock: clock.read)
 
-        XCTAssertTrue(try store.accept(candidate(session: "s1"), room: 158, generation: "g1"))
+        XCTAssertTrue(try store.accept(candidate(session: "s1"), room: 7, generation: "g1"))
         clock.now += 10
-        XCTAssertTrue(try store.accept(candidate(session: "s2"), room: 158, generation: "g1"))
+        XCTAssertTrue(try store.accept(candidate(session: "s2"), room: 7, generation: "g1"))
         clock.now += 10
-        XCTAssertTrue(try store.accept(candidate(session: "s3"), room: 158, generation: "g1"))
+        XCTAssertTrue(try store.accept(candidate(session: "s3"), room: 7, generation: "g1"))
 
         XCTAssertEqual(store.status().candidateCount, 2)
-        XCTAssertTrue(store.forSession("s1", room: 158, generation: "g1").isEmpty)
-        XCTAssertEqual(store.forSession("s2", room: 158, generation: "g1").count, 1)
-        XCTAssertEqual(store.forSession("s3", room: 158, generation: "g1").count, 1)
+        XCTAssertTrue(store.forSession("s1", room: 7, generation: "g1").isEmpty)
+        XCTAssertEqual(store.forSession("s2", room: 7, generation: "g1").count, 1)
+        XCTAssertEqual(store.forSession("s3", room: 7, generation: "g1").count, 1)
     }
 
     // MARK: - 过期与关闭
@@ -149,16 +149,16 @@ final class CandidateStoreTests: XCTestCase {
         let clock = FakeClock(1000)
         let store = try store(ttl: 10, clock: clock.read)
 
-        XCTAssertTrue(try store.accept(candidate(session: "s1"), room: 158, generation: "g1"))
+        XCTAssertTrue(try store.accept(candidate(session: "s1"), room: 7, generation: "g1"))
         clock.now = 1005
-        XCTAssertTrue(try store.accept(candidate(session: "s2"), room: 158, generation: "g1"))
+        XCTAssertTrue(try store.accept(candidate(session: "s2"), room: 7, generation: "g1"))
 
         XCTAssertEqual(store.status().candidateCount, 2)
         clock.now = 1010
         // 第一条 created=1000 <= deadline=1000 过期，第二条 created=1005 还在
         XCTAssertEqual(store.status().candidateCount, 1)
-        XCTAssertTrue(store.forSession("s1", room: 158, generation: "g1").isEmpty)
-        XCTAssertEqual(store.forSession("s2", room: 158, generation: "g1").count, 1)
+        XCTAssertTrue(store.forSession("s1", room: 7, generation: "g1").isEmpty)
+        XCTAssertEqual(store.forSession("s2", room: 7, generation: "g1").count, 1)
 
         clock.now = 1020
         XCTAssertEqual(store.status().candidateCount, 0)
@@ -166,21 +166,21 @@ final class CandidateStoreTests: XCTestCase {
 
     func testForSessionHonoursRoomAndGeneration() throws {
         let store = try store()
-        XCTAssertTrue(try store.accept(candidate(), room: 158, generation: "g1"))
+        XCTAssertTrue(try store.accept(candidate(), room: 7, generation: "g1"))
 
-        XCTAssertTrue(store.forSession("s1", room: 159, generation: "g1").isEmpty)
-        XCTAssertTrue(store.forSession("s1", room: 158, generation: "g2").isEmpty)
-        XCTAssertTrue(store.forSession("other", room: 158, generation: "g1").isEmpty)
+        XCTAssertTrue(store.forSession("s1", room: 8, generation: "g1").isEmpty)
+        XCTAssertTrue(store.forSession("s1", room: 7, generation: "g2").isEmpty)
+        XCTAssertTrue(store.forSession("other", room: 7, generation: "g1").isEmpty)
     }
 
     func testCloseDropsEntriesAndRefusesAccepts() throws {
         let store = try store()
-        XCTAssertTrue(try store.accept(candidate(), room: 158, generation: "g1"))
+        XCTAssertTrue(try store.accept(candidate(), room: 7, generation: "g1"))
 
         store.close()
 
-        XCTAssertFalse(try store.accept(candidate(session: "s2"), room: 158, generation: "g1"))
-        XCTAssertTrue(store.forSession("s1", room: 158, generation: "g1").isEmpty)
+        XCTAssertFalse(try store.accept(candidate(session: "s2"), room: 7, generation: "g1"))
+        XCTAssertTrue(store.forSession("s1", room: 7, generation: "g1").isEmpty)
         let status = store.status()
         XCTAssertEqual(status.candidateCount, 0)
         XCTAssertTrue(status.closed)
@@ -190,10 +190,10 @@ final class CandidateStoreTests: XCTestCase {
 
     func testStatusNeverClaimsVerifiedKeys() throws {
         let store = try store()
-        XCTAssertTrue(try store.accept(candidate(), room: 158, generation: "g1"))
+        XCTAssertTrue(try store.accept(candidate(), room: 7, generation: "g1"))
 
         let status = store.status()
-        XCTAssertEqual(status.room, 158)
+        XCTAssertEqual(status.room, 7)
         XCTAssertEqual(status.generation, "g1")
         XCTAssertEqual(status.candidateCount, 1)
         // 候选池永远不宣称「已验证」，验证是下游的事

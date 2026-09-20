@@ -603,11 +603,15 @@ final class WSReporterTests: XCTestCase {
         XCTAssertEqual(stats.resent, 0)
 
         let batches = h.server.batches
-        XCTAssertEqual(batches.count, 1)
-        XCTAssertEqual(batches[0].count, 3)
-        XCTAssertEqual(batches[0][0]["k"]?.stringValue, key.keyID)
-        let payload = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(batches[0][0]["data"]?.stringValue)))
-        XCTAssertEqual([UInt8](payload), datagram(1))
+        // 批的切分时机不是契约（每次 enqueue 各自 kick，首批发几条取决于调度），
+        // 只锁「3 条都发到、顺序不变、带 key、内容对」
+        let sent = batches.flatMap { $0 }
+        XCTAssertEqual(sent.count, 3)
+        XCTAssertEqual(sent.map { $0["k"]?.stringValue }, Array(repeating: key.keyID, count: 3))
+        for (index, item) in sent.enumerated() {
+            let payload = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(item["data"]?.stringValue)))
+            XCTAssertEqual([UInt8](payload), datagram(UInt8(index + 1)))
+        }
     }
 
     func testKeyAndMaterialAreTheOnlyResendTriggers() throws {
