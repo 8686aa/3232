@@ -22,6 +22,12 @@ public final class MiddlemanEngine {
     /// 回调在引擎队列上，不能阻塞。
     public var onUpload: (([UInt8]) -> Void)?
 
+    /// 每一次 UDP 转发的链路快照（含被签名门挡下的那些）。
+    /// 界面拿它画拓扑与报文流 —— 该看的是「代理上跑过什么」，不是「上报了什么」。
+    /// 回调在引擎队列上，不能阻塞。
+    public var onFlow: ((_ up: Bool, _ srcIp: String, _ sport: Int,
+                         _ dstIp: String, _ dport: Int, _ len: Int) -> Void)?
+
     private let counter = StatsCounter()
     private let queue = DispatchQueue(label: "starradar.engine")
     private let gate = UploadGate()
@@ -250,6 +256,9 @@ public final class MiddlemanEngine {
     /// 采集一条 UDP 报文。上下行都要走这里 —— 握手签名 7 项里有 4 项在下行，
     /// 只采上行永远凑不齐，整条流都会被当成随机 UDP 丢掉。
     private func capture(_ packet: UDPPacket, up: Bool) {
+        // 链路快照先记：挡下的报文同样属于「代理上跑过的流量」
+        onFlow?(up, packet.src, packet.sport, packet.dst, packet.dport, packet.payload.count)
+
         let ready = gate.feed(packet, up: up)
         counter.update {
             $0.gameFlows = self.gate.gameFlows
@@ -648,8 +657,9 @@ private final class UDPFlow {
 
 /// UDP ASSOCIATE 要告诉客户端「往哪个地址发 UDP」。
 /// 这里只做尽力而为的探测，探测不准时用 `EngineConfig.advertisedHost` 手工指定。
-enum LocalAddress {
-    static func primaryIPv4() -> String? {
+/// 界面也拿它显示「本机地址」（热点设备该把代理指向哪）。
+public enum LocalAddress {
+    public static func primaryIPv4() -> String? {
         var head: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&head) == 0, let first = head else { return nil }
         defer { freeifaddrs(head) }

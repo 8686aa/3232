@@ -18,7 +18,7 @@ public struct EngineConfig {
     public var maxUDPFlows: Int
 
     public init(
-        listenPort: UInt16 = 1080,
+        listenPort: UInt16 = 1010,
         advertisedHost: String? = nil,
         interceptPorts: Set<UInt16> = [65010],
         udpIdleTimeout: TimeInterval = 120,
@@ -74,7 +74,7 @@ func describeNetworkError(_ error: Error) -> String {
     switch code.rawValue {
     case 48:
         name = "EADDRINUSE"
-        hint = "端口已被占用（小火箭本地代理默认也占 1080，换个监听端口）"
+        hint = "端口已被占用（换个监听端口，别和本机其它代理撞车）"
     case 50:
         name = "ENETDOWN"
         hint = "网络接口不可用（本机没网，或没给「本地网络」权限）"

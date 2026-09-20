@@ -1,187 +1,511 @@
 import SwiftUI
-import StarRadarCore
+import UIKit
 
+/// 首页：霓虹暗黑皮肤，一屏看完「节点 / 配置 / 统计 / 星图 / 波形 / 报文流 / 日志」。
 struct ContentView: View {
     @ObservedObject var model: EngineViewModel
 
+    @State private var showAddNode = false
+    @State private var draftNode = ""
+    @State private var errMsg = ""
+    @State private var showErr = false
+
     var body: some View {
-        NavigationStack {
-            Form {
-                listenSection
-                reportSection
-                statsSection
-                materialSection
-                logSection
-                hintSection
-            }
-            .navigationTitle("中间人")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(model.isRunning ? "停止" : "启动") {
-                        model.isRunning ? model.stop() : model.start()
-                    }
-                    .bold()
-                    .tint(model.isRunning ? .red : .accentColor)
+        VStack(spacing: 0) {
+            header
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    nodeSection
+                    keySection
+                    portSection
+                    advancedSection
+                    statsSection
+                    radarSection
+                    waveSection
+                    packetSection
+                    logSection
                 }
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+                .padding(.bottom, 8)
             }
-            .alert("出错了", isPresented: errorBinding) {
-                Button("好", role: .cancel) { model.errorMessage = nil }
-            } message: {
-                Text(model.errorMessage ?? "")
+
+            bottomBar
+        }
+        .background(P.color(P.BG0).ignoresSafeArea())
+        .alert("添加订阅节点", isPresented: $showAddNode) {
+            TextField("节点 IP", text: $draftNode)
+                .keyboardType(.numbersAndPunctuation)
+            Button("取消", role: .cancel) { draftNode = "" }
+            Button("添加") { addNode() }
+        } message: {
+            Text("只需输入节点 IP，端口固定 1082")
+        }
+        .alert("提示", isPresented: $showErr) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(errMsg)
+        }
+        // 单参数写法是为了兼容 iOS 16（双参数的 onChange 要 17）
+        .onChange(of: model.wsState) { newValue in
+            // 鉴权失败：节点明确拒绝，上报已终止，不再重连
+            if newValue == "鉴权失败" && model.isRunning {
+                errMsg = "鉴权失败：房间 Key 无效，已停止上报"
+                showErr = true
+            }
+        }
+        .onChange(of: model.errorMessage) { newValue in
+            guard let newValue else { return }
+            errMsg = newValue
+            showErr = true
+            model.errorMessage = nil
+        }
+    }
+
+    // MARK: - 标题栏
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("星辰雷达")
+                    .font(Fonts.sansBold(17))
+                    .tracking(1.0)
+                    .foregroundColor(P.color(P.TXT))
+                Text("Star Radar · iOS v1.0.0-alpha")
+                    .font(Fonts.sans(10))
+                    .foregroundColor(P.color(P.TXT_MUTE))
+            }
+            Spacer(minLength: 8)
+            connChip
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+        .background(
+            ZStack(alignment: .bottom) {
+                LinearGradient(colors: [P.color(0xE60C1323), P.color(0xA0070C18)],
+                               startPoint: .top, endPoint: .bottom)
+                Rectangle().fill(P.color(0x291860DC)).frame(height: 1)
+            }
+        )
+    }
+
+    private var connChip: some View {
+        Text(model.isRunning ? model.wsState : "未连接")
+            .font(Fonts.sans(11))
+            .foregroundColor(P.color(model.isRunning ? P.BG0 : P.alpha(P.TXT_DIM, 0xCC)))
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(
+                Capsule().fill(model.isRunning
+                    ? AnyShapeStyle(LinearGradient(colors: [P.color(P.CYAN), P.color(P.TEAL)],
+                                                   startPoint: .leading, endPoint: .trailing))
+                    : AnyShapeStyle(P.color(0x1F5B6B91)))
+            )
+            .overlay(
+                Capsule().stroke(P.color(model.isRunning ? 0x00000000 : 0x3D8C9DC4), lineWidth: 1)
+            )
+    }
+
+    // MARK: - 订阅节点
+
+    private var nodeSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("订阅节点", bar: P.CYAN, trailing: model.latLabel, trailingColor: latColor)
+                .padding(.bottom, 8)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(model.nodes, id: \.self) { ip in
+                        nodeChip(ip: ip, selected: ip == model.selectedHost)
+                            .onTapGesture { model.selectNode(ip) }
+                            .onLongPressGesture { model.removeNode(ip) }
+                    }
+                    addChip
+                }
+                .padding(.horizontal, 1)
+                .padding(.vertical, 2)
             }
         }
     }
 
-    // MARK: - 配置
+    private func nodeChip(ip: String, selected: Bool) -> some View {
+        Text(ip)
+            .font(Fonts.mono(12))
+            .foregroundColor(P.color(selected ? P.CYAN : P.alpha(P.TXT_DIM, 0xE6)))
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(P.color(selected ? P.alpha(P.CYAN, 0x1A) : 0x66070C18))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(P.color(selected ? P.alpha(P.CYAN, 0x73) : P.alpha(0xFF1860DC, 0x33)), lineWidth: 1)
+            )
+    }
 
-    private var listenSection: some View {
-        Section {
-            LabeledContent("监听端口") {
-                TextField("1080", text: $model.portText)
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.trailing)
-                    .disabled(model.isRunning)
-            }
-            LabeledContent("拦截端口") {
-                TextField("65010", text: $model.interceptPortsText)
-                    .keyboardType(.numbersAndPunctuation)
-                    .multilineTextAlignment(.trailing)
-                    .disabled(model.isRunning)
-            }
-            LabeledContent("对外地址") {
-                TextField("自动探测", text: $model.advertisedHost)
-                    .multilineTextAlignment(.trailing)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .disabled(model.isRunning)
-            }
-        } header: {
-            Text("配置")
-        } footer: {
-            Text("对外地址是告诉小火箭「UDP 往哪发」的地址。自动探测不准（比如走热点）时必须手工填本机在同一个网段里的 IP。")
+    private var addChip: some View {
+        Button {
+            draftNode = ""
+            showAddNode = true
+        } label: {
+            Text("+ 添加")
+                .font(Fonts.sans(12))
+                .foregroundColor(P.color(P.alpha(P.TXT_DIM, 0xE6)))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(P.color(0x33070C18))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(P.color(P.alpha(P.CYAN, 0x33)),
+                                style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                )
         }
     }
 
-    // MARK: - 上报
+    // MARK: - 房间 KEY
 
-    private var reportSection: some View {
-        Section {
-            LabeledContent("订阅地址") {
-                TextField("ws://节点地址:1082", text: $model.reportAddressText)
-                    .keyboardType(.URL)
-                    .multilineTextAlignment(.trailing)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .disabled(model.isRunning)
-            }
-            LabeledContent("房间 Key") {
-                TextField("32 位十六进制", text: $model.roomKeyText)
-                    .font(.system(.body, design: .monospaced))
-                    .multilineTextAlignment(.trailing)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .disabled(model.isRunning)
-            }
-            LabeledContent("密钥覆盖") {
-                TextField("留空则用自动抽取", text: $model.keyOverrideText)
-                    .font(.system(.caption, design: .monospaced))
-                    .multilineTextAlignment(.trailing)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-            }
+    private var keySection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("房间 KEY", bar: P.VIOLET, trailing: keyHint, trailingColor: P.TXT_MUTE)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+            neonField($model.roomKeyText, placeholder: "32 位房间 Key", keyboard: .asciiCapable)
+            neonField($model.keyOverrideText,
+                      placeholder: "覆盖密钥（128 字节 hex，留空即自动抽取）",
+                      keyboard: .asciiCapable)
+                .padding(.top, 8)
             if let error = model.keyOverrideError {
                 Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
+                    .font(Fonts.mono(10))
+                    .foregroundColor(P.color(P.RED))
+                    .padding(.top, 6)
             }
-            LabeledContent("上报", value: model.reportConnectionSummary)
-            if model.reportConfigured {
-                LabeledContent("已发 / 补发", value: "\(model.reportStats.sent) / \(model.reportStats.resent)")
-                LabeledContent("排队 / 丢弃", value: "\(model.reportStats.queued) / \(model.reportStats.dropped)")
-                if let keyID = model.reportStats.keyID {
-                    LabeledContent("密钥版本", value: keyID)
-                }
-            }
-            if let failure = model.reportFailure {
-                Text(failure)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-            }
-        } header: {
-            Text("WebSocket 上报")
-        } footer: {
-            Text("订阅地址是转发器节点，只填 IP 就按默认端口 1082；房间 Key 同时是预共享密钥与房间号，必须与服务端一致。两项都留空就不上报；地址与 Key 只能在停止后修改。密钥覆盖填 128 字节十六进制后即压过自动抽取的候选（自动抽取是照 base64 形状猜的，猜错时可手工顶掉），改动立刻生效。")
         }
     }
 
-    // MARK: - 状态
+    // MARK: - 监听端口
+
+    private var portSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("监听端口", bar: P.TEAL, trailing: "1–65535", trailingColor: P.TXT_MUTE)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+            neonField($model.portText, placeholder: "1010", keyboard: .numberPad)
+                .frame(width: 118)
+                .disabled(model.isRunning)
+        }
+    }
+
+    // MARK: - 转发（高级）
+
+    private var advancedSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("转发（高级）", bar: P.AMBER, trailing: nil)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+            neonField($model.advertisedHost, placeholder: "对外地址（留空自动探测）")
+                .disabled(model.isRunning)
+            neonField($model.interceptPortsText, placeholder: "拦截端口，如 65010",
+                      keyboard: .numbersAndPunctuation)
+                .padding(.top, 8)
+                .disabled(model.isRunning)
+        }
+    }
+
+    // MARK: - 统计
 
     private var statsSection: some View {
-        Section("状态") {
-            LabeledContent("运行", value: model.isRunning ? model.listenSummary : "未启动")
-            LabeledContent("CONNECT", value: "\(model.stats.connectAccepted)")
-            LabeledContent("UDP ASSOCIATE", value: "\(model.stats.udpAssociateAccepted)")
-            LabeledContent("中间人会话 / 纯转发", value: "\(model.stats.middlemanSessions) / \(model.stats.relaySessions)")
-            LabeledContent("ClientHello / ServerHello", value: "\(model.stats.clientHelloSeen) / \(model.stats.serverHelloSeen)")
-            LabeledContent("已翻译帧 / 失败", value: "\(model.stats.translatedFrames) / \(model.stats.translateFailures)")
-            LabeledContent("UDP 上行 / 下行", value: "\(model.stats.udpDatagramsToUpstream) / \(model.stats.udpDatagramsFromUpstream)")
-            LabeledContent("UDP 流", value: "\(model.stats.udpFlows)")
-            LabeledContent("对局流 / 上报过滤", value: "\(model.stats.gameFlows) / \(model.stats.udpFlowsFiltered)")
-            LabeledContent("已入队 / 未能组装", value: "\(model.stats.udpUploaded) / \(model.stats.udpUnbuildable)")
-            if let lastError = model.stats.lastError {
-                Text(lastError).font(.footnote).foregroundStyle(.red)
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                StatTile(title: "上行报文", accent: P.TEAL, valueColor: P.TXT, value: model.upPackets)
+                StatTile(title: "下行报文", accent: P.VIOLET, valueColor: P.DOWN, value: model.downPackets)
+            }
+            HStack(spacing: 10) {
+                StatTile(title: "上行流量 KB", accent: P.CYAN, valueColor: P.TXT, value: model.upBytes / 1024)
+                StatTile(title: "下行流量 KB", accent: P.VIOLET, valueColor: P.DOWN, value: model.downBytes / 1024)
+            }
+            HStack(spacing: 10) {
+                StatTile(title: "已上报", accent: P.TEAL, valueColor: P.TXT, value: Int64(model.reportStats.sent))
+                StatTile(title: "待发队列", accent: P.AMBER, valueColor: P.AMBER,
+                         value: Int64(model.reportStats.queued))
+            }
+            HStack(spacing: 10) {
+                StatTile(title: "补发", accent: P.TEAL, valueColor: P.TXT, value: Int64(model.reportStats.resent))
+                StatTile(title: "待补发", accent: P.AMBER, valueColor: P.AMBER,
+                         value: Int64(model.reportStats.replay))
             }
         }
+        .padding(.top, 16)
     }
 
-    // MARK: - 候选密钥
+    // MARK: - 星图
 
-    private var materialSection: some View {
-        Section("候选密钥") {
-            LabeledContent("候选数", value: "\(model.stats.cryptoCandidates)")
-            if let hex = model.latestMaterialHex {
-                Text(hex)
-                    .font(.system(.caption2, design: .monospaced))
-                    .textSelection(.enabled)
-                Button("复制最近的 128 字节材料") { model.copyLatestMaterial() }
-            } else {
-                Text("尚未从 0x4013 指令里捞到候选材料")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+    private var radarSection: some View {
+        NeonCard {
+            VStack(alignment: .leading, spacing: 0) {
+                cardTitle("链路拓扑", trailing: radarHint)
+                RadarView(model: model.radar)
+                    .frame(height: 268)
+                    .padding(.top, 6)
             }
         }
+        .padding(.top, 14)
+    }
+
+    // MARK: - 波形
+
+    private var waveSection: some View {
+        NeonCard(accent: P.VIOLET) {
+            VStack(alignment: .leading, spacing: 0) {
+                cardTitle("流量波形", trailing: nil)
+                WaveView(model: model.wave)
+                    .frame(height: 128)
+                    .padding(.top, 6)
+            }
+        }
+        .padding(.top, 12)
+    }
+
+    // MARK: - 报文流
+
+    private var packetSection: some View {
+        NeonCard {
+            VStack(alignment: .leading, spacing: 0) {
+                cardTitle("报文流", trailing: "近 \(model.rows.count) 条")
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(model.rows) { row in
+                            PacketRowView(info: row)
+                        }
+                    }
+                }
+                .frame(height: 212)
+                .padding(.top, 6)
+                .overlay {
+                    if model.rows.isEmpty {
+                        Text("等待数据包…")
+                            .font(Fonts.mono(11))
+                            .foregroundColor(P.color(P.TXT_MUTE))
+                    }
+                }
+            }
+        }
+        .padding(.top, 12)
     }
 
     // MARK: - 日志
 
     private var logSection: some View {
-        Section("事件日志") {
-            if model.logLines.isEmpty {
-                Text("暂无事件").font(.footnote).foregroundStyle(.secondary)
-            } else {
-                // 倒序显示尾部，免去滚动定位
-                ForEach(Array(model.logLines.suffix(60).reversed()), id: \.self) { line in
-                    Text(line)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
+        NeonCard(accent: P.TEAL) {
+            VStack(alignment: .leading, spacing: 0) {
+                cardTitle("运行日志", trailing: "\(model.lines.count) 条")
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(tailLines) { line in
+                            HStack(alignment: .top, spacing: 6) {
+                                Text(fmtTime(line.at))
+                                    .font(Fonts.mono(10))
+                                    .foregroundColor(P.color(P.TXT_MUTE))
+                                Text(line.msg)
+                                    .font(Fonts.mono(10))
+                                    .foregroundColor(P.color(levelColor(line.level)))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 1)
                 }
+                .frame(height: 168)
+                .padding(.top, 6)
+            }
+        }
+        .padding(.top, 12)
+    }
+
+    /// 只渲染尾部 120 条，避免日志长了以后拖慢滚动
+    private var tailLines: [EngineViewModel.LogLine] {
+        model.lines.count > 120 ? Array(model.lines.suffix(120)) : model.lines
+    }
+
+    // MARK: - 底栏
+
+    private var bottomBar: some View {
+        VStack(spacing: 0) {
+            Text(footText)
+                .font(Fonts.mono(10))
+                .foregroundColor(P.color(P.TXT_MUTE))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, 10)
+
+            HStack(spacing: 10) {
+                startButton
+                stopButton
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .background(
+            ZStack(alignment: .top) {
+                LinearGradient(colors: [P.color(0xF2070C18), P.color(0xFA04060D)],
+                               startPoint: .top, endPoint: .bottom)
+                Rectangle().fill(P.color(0x331860DC)).frame(height: 1)
+            }
+        )
+    }
+
+    private var startButton: some View {
+        Button {
+            model.start()
+        } label: {
+            Text("开始监听")
+                .font(Fonts.sansBold(14))
+                .foregroundColor(P.color(model.isRunning ? P.alpha(P.TXT_MUTE, 0x99) : P.BG0))
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(model.isRunning
+                            ? AnyShapeStyle(P.color(0x140F2A33))
+                            : AnyShapeStyle(LinearGradient(colors: [P.color(P.CYAN), P.color(P.TEAL)],
+                                                           startPoint: .leading, endPoint: .trailing)))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(P.color(model.isRunning ? P.alpha(P.CYAN, 0x22) : 0x00000000), lineWidth: 1)
+                )
+        }
+        .disabled(model.isRunning)
+    }
+
+    private var stopButton: some View {
+        Button {
+            model.stop()
+        } label: {
+            Text("停止监听")
+                .font(Fonts.sansBold(14))
+                .foregroundColor(P.color(model.isRunning ? P.RED : P.alpha(P.RED, 0x66)))
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(P.color(model.isRunning ? 0x1AF87171 : 0x0FF87171))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(P.color(model.isRunning ? 0x66F87171 : 0x33F87171), lineWidth: 1)
+                )
+        }
+        .disabled(!model.isRunning)
+    }
+
+    // MARK: - 公共片段
+
+    private func sectionHeader(_ title: String, bar: UInt32,
+                               trailing: String? = nil,
+                               trailingColor: UInt32 = P.TXT_MUTE) -> some View {
+        HStack(spacing: 7) {
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(P.color(bar))
+                .frame(width: 3, height: 12)
+            Text(title)
+                .font(Fonts.sansMedium(12))
+                .foregroundColor(P.color(P.alpha(P.TXT, 0xD9)))
+            Spacer(minLength: 6)
+            if let t = trailing {
+                Text(t)
+                    .font(Fonts.mono(11))
+                    .foregroundColor(P.color(trailingColor))
             }
         }
     }
 
-    private var hintSection: some View {
-        Section("小火箭侧") {
-            Text("1. 代理类型选 SOCKS5，指向本机 端口 \(model.portText)")
-            Text("2. 全局路由设为「代理」，否则游戏 UDP 会被规则直连放走")
-            Text("3. 保持本 App 在前台，iOS 会挂起后台应用")
+    private func cardTitle(_ title: String, trailing: String?) -> some View {
+        HStack(spacing: 7) {
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(P.color(P.CYAN))
+                .frame(width: 3, height: 12)
+            Text(title)
+                .font(Fonts.sansMedium(12))
+                .foregroundColor(P.color(P.alpha(P.TXT, 0xD9)))
+            Spacer(minLength: 6)
+            if let t = trailing {
+                Text(t)
+                    .font(Fonts.mono(10))
+                    .foregroundColor(P.color(P.TXT_MUTE))
+            }
         }
-        .font(.footnote)
     }
 
-    private var errorBinding: Binding<Bool> {
-        Binding(
-            get: { model.errorMessage != nil },
-            set: { if !$0 { model.errorMessage = nil } }
-        )
+    private func neonField(_ text: Binding<String>, placeholder: String,
+                           keyboard: UIKeyboardType = .default) -> some View {
+        TextField(placeholder, text: text)
+            .font(Fonts.mono(14))
+            .foregroundColor(P.color(P.TXT))
+            .tint(P.color(P.CYAN))
+            .keyboardType(keyboard)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous).fill(P.color(0xB80C1323))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(P.color(0x331860DC), lineWidth: 1)
+            )
+    }
+
+    // MARK: - 计算属性
+
+    private var latColor: UInt32 {
+        if !model.isRunning || model.latMs < 0 { return P.RED }
+        if model.latMs < 200 { return P.TEAL }
+        if model.latMs < 600 { return P.AMBER }
+        return P.RED
+    }
+
+    private var keyHint: String {
+        let n = model.roomKeyText.trimmingCharacters(in: .whitespaces).count
+        return n == 0 ? "未填写，节点将拒绝鉴权" : "已填 \(n)/32"
+    }
+
+    private var radarHint: String {
+        model.isRunning ? "监听中 · 热点客户端全覆盖 · 会话流过滤后上报" : "待机中 · 未开始监听"
+    }
+
+    private var footText: String {
+        "本机 \(model.localIp):\(model.portText)  ·  节点 \(model.currentNode):1082  ·  重连 \(model.reportStats.reconnects)"
+            + "  ·  过滤 \(model.stats.udpFlowsFiltered)  ·  丢弃 \(model.reportStats.dropped)"
+    }
+
+    private func levelColor(_ level: EngineViewModel.Level) -> UInt32 {
+        switch level {
+        case .info: return P.TXT_DIM
+        case .ok:   return P.TEAL
+        case .warn: return P.AMBER
+        case .err:  return P.RED
+        }
+    }
+
+    // MARK: - 动作
+
+    private func addNode() {
+        let ip = draftNode.trimmingCharacters(in: .whitespaces)
+        draftNode = ""
+        model.addNode(ip)
     }
 }
