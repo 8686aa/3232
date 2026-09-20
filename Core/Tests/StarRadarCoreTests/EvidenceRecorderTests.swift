@@ -127,7 +127,7 @@ final class EvidenceRecorderTests: XCTestCase {
         XCTAssertEqual(Array(raw.prefix(8)), Array(EvidenceRecorder.candidateMagic.utf8))
         XCTAssertFalse(raw.contains(0x11))
 
-        let evidence = try EvidenceRecorder.readCandidate(at: url, protector: try protractor())
+        let evidence = try EvidenceRecorder.readCandidate(at: url, protector: try makeProtector())
         XCTAssertEqual(evidence.schema, 1)
         XCTAssertEqual(evidence.server, "123.99.198.158")
         XCTAssertEqual(evidence.room, 158)
@@ -209,13 +209,13 @@ final class EvidenceRecorderTests: XCTestCase {
         let raw = [UInt8](try Data(contentsOf: url))
         XCTAssertEqual(Array(raw.prefix(8)), Array(EvidenceRecorder.materialMagic.utf8))
 
-        let plain = try (try protractor()).unprotect(Array(raw.dropFirst(8)))
+        let plain = try (try makeProtector()).unprotect(Array(raw.dropFirst(8)))
         let row = try XCTUnwrap(
             try JSONSerialization.jsonObject(with: Data(plain)) as? [String: Any]
         )
         XCTAssertEqual(row["kind"] as? String, "named-key-candidate")
         XCTAssertEqual(row["field_path"] as? String, "$.data.encryptionKey")
-        XCTAssertEqual(row["udp_targets"] as? [[Any]].count, 1)
+        XCTAssertEqual((row["udp_targets"] as? [[Any]])?.count, 1)
         XCTAssertEqual(row["payload_b64"] as? String, Data(payload).base64EncodedString())
         XCTAssertEqual(row["verified_udp_key"] as? Bool, false)
     }
@@ -333,7 +333,7 @@ final class EvidenceRecorderTests: XCTestCase {
     }
 
     func testReadCandidateRejectsBadFormatAndTamperedMaterial() throws {
-        let protector = try protractor()
+        let protector = try makeProtector()
 
         // magic 不对
         let bad = root.appendingPathComponent("bad.dpapi")
@@ -370,7 +370,7 @@ final class EvidenceRecorderTests: XCTestCase {
     // MARK: - 保护层
 
     func testProtectorRejectsWrongKeyAndWrongLength() throws {
-        let protector = try protractor()
+        let protector = try makeProtector()
         let sealed = try protector.protect([1, 2, 3])
         XCTAssertEqual(try protector.unprotect(sealed), [1, 2, 3])
 
