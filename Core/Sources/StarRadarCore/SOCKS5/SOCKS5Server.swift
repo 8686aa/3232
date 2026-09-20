@@ -157,7 +157,15 @@ public final class SOCKS5Server {
         // 失败退回临时端口 —— 回复里会把实际端口告诉客户端，客户端以回复为准。
         let relay = SOCKS5UDPRelay(preferredPort: options.port, queue: queue)
         relay.onLog = { [weak self] message in self?.onLog?(message) }
-        try relay.start()
+        // UDP 中继绑不上必须报出来，否则是静默的：TCP 看着正常，UDP 全丢
+        relay.onError = { [weak self] error in self?.onError?(error) }
+        do {
+            try relay.start()
+        } catch {
+            // 半启动状态最坑：TCP 已经占着端口，重试一次就撞 EADDRINUSE
+            stop()
+            throw error
+        }
         self.udpRelay = relay
     }
 

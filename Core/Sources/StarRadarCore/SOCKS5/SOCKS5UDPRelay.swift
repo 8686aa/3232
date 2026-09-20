@@ -35,34 +35,64 @@ public final class SOCKS5UDPRelay {
     }
 
     func start() throws {
-        let parameters = NWParameters.udp
-        parameters.allowLocalEndpointReuse = true
-
-        var listener: NWListener
-        if preferredPort != 0, let port = NWEndpoint.Port(rawValue: preferredPort),
-           let bound = try? NWListener(using: parameters, on: port) {
-            listener = bound
+        // 优先与 TCP 同号（TCP/UDP 命名空间独立，可以并存）
+        if preferredPort != 0, let port = NWEndpoint.Port(rawValue: preferredPort) {
+            try bind(port: port, fallbackToEphemeral: true)
         } else {
-            listener = try NWListener(using: parameters)
+            try bind(port: nil, fallbackToEphemeral: false)
         }
+    }
 
-        listener.newConnectionHandler = { [weak self] connection in
-            self?.accept(connection)
-        }
+    /// 绑监听器。
+    ///
+    /// `NWListener(using:on:)` 对「端口被占」**不抛错**，只在 stateUpdateHandler 里异步报
+    /// `.failed` —— 所以「同号占不到就退临时端口」必须等状态回调，用 `try?` 判空是永远走不到的。
+    private func bind(port: NWEndpoint.Port?, fallbackToEphemeral: Bool) throws {
+        let listener = try makeListener(on: port)
         listener.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             switch state {
             case .ready:
-                self.port = listener.port?.rawValue
+                self.port = self.listener?.port?.rawValue ?? port?.rawValue
                 self.onLog?("UDP 中继就绪，端口 \(self.port.map(String.init) ?? "?")")
             case .failed(let error):
-                self.onError?(error)
+                guard fallbackToEphemeral else {
+                    self.onError?(error)
+                    return
+                }
+                self.onLog?("UDP 中继绑定 \(self.preferredPort) 失败："
+                    + "\(describeNetworkError(error))，改用临时端口")
+                // 先摘表再取消：重绑失败时要留下干净的「没有中继」状态，而不是一个已死的监听器
+                let failed = self.listener
+                self.listener = nil
+                self.port = nil
+                failed?.cancel()
+                do {
+                    try self.bind(port: nil, fallbackToEphemeral: false)
+                } catch {
+                    self.onError?(error)
+                }
             default:
                 break
             }
         }
         self.listener = listener
         listener.start(queue: queue)
+    }
+
+    private func makeListener(on port: NWEndpoint.Port?) throws -> NWListener {
+        let parameters = NWParameters.udp
+        parameters.allowLocalEndpointReuse = true
+        let listener: NWListener
+        if let port {
+            listener = try NWListener(using: parameters, on: port)
+        } else {
+            listener = try NWListener(using: parameters)
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.accept(connection)
+        }
+        return listener
     }
 
     func stop() {

@@ -44,7 +44,7 @@ public final class MiddlemanEngine {
         server.onLog = { [weak self] message in self?.log.write(message) }
         server.onError = { [weak self] error in
             self?.counter.record(error: error)
-            self?.log.write("SOCKS5 错误：\(error)")
+            self?.log.write("SOCKS5 错误：\(describeNetworkError(error))")
         }
         server.onConnect = { [weak self] request, client in
             self?.accept(request: request, client: client)
@@ -256,7 +256,11 @@ private final class TCPRelay {
             reject(.addressTypeNotSupported, "目标端口非法 \(target.port)")
             return
         }
-        let parameters = NWParameters.tcp
+        // 默认 0 表示不超时，SYN 一直没人应答时要等内核重传耗尽（约 75 秒）才报
+        // ETIMEDOUT，客户端那边早就超时重试了。压到 15 秒，让失败带着目标地址早点落到日志。
+        let tcpOptions = NWProtocolTCP.Options()
+        tcpOptions.connectionTimeout = 15
+        let parameters = NWParameters(tls: nil, tcp: tcpOptions)
         parameters.allowLocalEndpointReuse = true
         let connection = NWConnection(
             to: .hostPort(host: NWEndpoint.Host(target.host), port: port),
@@ -279,17 +283,17 @@ private final class TCPRelay {
                 // 建连前等路径：快速失败让客户端重试，比挂住等超时体验好；
                 // 建连后是链路抖动，不能冒充失败回复去掐断活着的连接
                 if self.ready {
-                    self.onLog?("上游链路抖动：\(error)")
+                    self.onLog?("上游链路抖动：\(describeNetworkError(error))")
                 } else {
-                    self.reject(Self.reply(for: error), "\(error)")
+                    self.reject(Self.reply(for: error), describeNetworkError(error))
                 }
             case .failed(let error):
                 if self.ready {
                     self.counter.record(error: error)
-                    self.onLog?("上游连接中断：\(error)")
+                    self.onLog?("上游连接中断：\(describeNetworkError(error))")
                     self.close()
                 } else {
-                    self.reject(Self.reply(for: error), "\(error)")
+                    self.reject(Self.reply(for: error), describeNetworkError(error))
                 }
             case .cancelled:
                 self.close()
@@ -348,7 +352,7 @@ private final class TCPRelay {
                 self.close()
             case .failed(let error):
                 self.counter.record(error: error)
-                self.onLog?("客户端通道异常：\(error)")
+                self.onLog?("客户端通道异常：\(describeNetworkError(error))")
                 self.clientFinished = true
                 self.close()
             }
@@ -366,7 +370,7 @@ private final class TCPRelay {
             }
             if let error {
                 self.counter.record(error: error)
-                self.onLog?("上游通道异常：\(error)")
+                self.onLog?("上游通道异常：\(describeNetworkError(error))")
                 self.upstreamFinished = true
                 self.close()
                 return
