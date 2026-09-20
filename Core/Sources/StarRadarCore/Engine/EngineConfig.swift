@@ -73,6 +73,12 @@ func describeNetworkError(_ error: Error) -> String {
     case 51:
         name = "ENETUNREACH"
         hint = "网络不可达（这个地址在本机没有路由）"
+    case 53:
+        name = "ECONNABORTED"
+        hint = "本机把连接掐了，不是对端不回。iOS 上主要两类：App 退到后台被挂起后系统"
+            + "回收网络资源、把连接撕掉（Apple 技术文档 Technote 2277），或 App 的"
+            + "「本地网络」「蜂窝」权限被拒。同一地址用 Safari 打得开就说明链路没问题，"
+            + "只剩本机策略与 App 生命周期这两个方向"
     case 54:
         name = "ECONNRESET"
         hint = "对端把连接重置了"
