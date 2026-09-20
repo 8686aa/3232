@@ -46,6 +46,14 @@ public struct EngineStats: Equatable {
     public var udpDatagramsFromUpstream = 0
     public var udpFlows = 0
     public var cryptoCandidates = 0
+    /// 已识别的对局流数（按序命中握手长度签名）
+    public var gameFlows = 0
+    /// 被签名门挡下的报文数
+    public var udpFlowsFiltered = 0
+    /// 已交给上报端的报文数
+    public var udpUploaded = 0
+    /// 过了闸门却拼不出 IPv4 报文的条数（远端是域名或 IPv6）
+    public var udpUnbuildable = 0
     public var lastError: String?
 
     /// 显式给一个公开构造：App target 在另一个模块，拿不到合成的 internal 逐一构造器

@@ -24,6 +24,10 @@ final class EngineViewModel: ObservableObject {
     @Published var roomKeyText = "" {
         didSet { defaults.set(roomKeyText, forKey: DefaultsKey.roomKey) }
     }
+    /// 手动覆盖的对局密钥材料：128 字节十六进制。填了就压过自动抽取的候选
+    @Published var keyOverrideText = "" {
+        didSet { defaults.set(keyOverrideText, forKey: DefaultsKey.keyOverride) }
+    }
     @Published private(set) var reportStats = ReporterStats()
     /// 配置层面的问题（地址解析不了、Key 不是 32 位 hex），与上报端自己的 lastError 分开
     @Published private(set) var reportConfigError: String?
@@ -31,17 +35,21 @@ final class EngineViewModel: ObservableObject {
     private enum DefaultsKey {
         static let reportAddress = "report.address"
         static let roomKey = "report.roomKey"
+        static let keyOverride = "report.keyOverride"
     }
 
     private let engine = MiddlemanEngine()
     private let defaults = UserDefaults.standard
     private var reporter: WSReporter?
+    /// 上一次真正下发给上报端的密钥，用来避免每秒重复下发
+    private var pushedKey: UploadKey?
     private var pollTimer: Timer?
     private let maxLogLines = 200
 
     init() {
         reportAddressText = defaults.string(forKey: DefaultsKey.reportAddress) ?? ""
         roomKeyText = defaults.string(forKey: DefaultsKey.roomKey) ?? ""
+        keyOverrideText = defaults.string(forKey: DefaultsKey.keyOverride) ?? ""
         engine.log.onLine = { [weak self] line in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -170,12 +178,56 @@ final class EngineViewModel: ObservableObject {
             return
         }
         self.reporter = reporter
+        // 引擎采集到的是「确定该上报的完整 IP 数据报」，这里只管投给上报端。
+        // 弱引用上报端：停掉之后回调自动变空操作，不会再往一条已停止的链路里塞包。
+        engine.onUpload = { [weak reporter] datagram in reporter?.enqueue(datagram) }
+        pushedKey = nil
         reporter.start()
+        pushKeyIfChanged()
     }
 
     private func stopReporter() {
+        engine.onUpload = nil
+        pushedKey = nil
         reporter?.stop()
         reporter = nil
+    }
+
+    /// 手动覆盖文本的解析结果。nil = 没填或填得对，非 nil 是给界面看的错误说明
+    var keyOverrideError: String? {
+        let text = keyOverrideText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        guard UploadKey.material(fromHex: text) != nil else {
+            return "覆盖密钥需为 128 字节十六进制（256 个字符）"
+        }
+        return nil
+    }
+
+    /// 当前该下发给转发器的对局密钥。
+    ///
+    /// 手动覆盖优先：自动抽取是照 base64 形状猜出来的，猜错字节段时得靠真实材料顶掉它。
+    private func currentKey() -> UploadKey? {
+        if let material = UploadKey.material(fromHex: keyOverrideText) {
+            // 覆盖密钥每次都用「现在」当观测时间，否则服务端按 observed_ms 判旧会不采用
+            return UploadKey(
+                session: "manual",
+                material: material,
+                observedMS: UInt64(Date().timeIntervalSince1970 * 1000),
+                verified: false
+            )
+        }
+        return engine.latestKey
+    }
+
+    /// 密钥变了才下发。上报端自己也会按 (会话, 材料) 去重，这里是省掉每秒一次空轮询。
+    private func pushKeyIfChanged() {
+        guard let reporter else { return }
+        let key = currentKey()
+        // 比 (会话, 材料) 而不是整个结构体：覆盖密钥的 observed_ms 每次都取当前时间
+        let same = key?.session == pushedKey?.session && key?.sha256 == pushedKey?.sha256
+        guard !same else { return }
+        pushedKey = key
+        reporter.setKey(key)
     }
 
     /// 配置只能在引擎停下来的时候改
@@ -206,6 +258,7 @@ final class EngineViewModel: ObservableObject {
         }
         if let reporter {
             reportStats = reporter.stats()
+            pushKeyIfChanged()
         }
     }
 

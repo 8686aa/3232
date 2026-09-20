@@ -81,6 +81,14 @@ public struct UploadKey: Equatable {
             verified: verified
         )
     }
+
+    /// 从十六进制文本还原材料 —— 界面上的「手动覆盖」用。
+    /// 长度不是 128 字节、或含非 `[0-9a-fA-F]` 字符一律返回 nil。
+    public static func material(fromHex text: String) -> [UInt8]? {
+        guard let bytes = Hex.decode(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              bytes.count == materialBytes else { return nil }
+        return bytes
+    }
 }
 
 /// 业务消息的 JSON 文本。字段与 `WsMirrorServer.cs` 的 `HandleBattleKey` /

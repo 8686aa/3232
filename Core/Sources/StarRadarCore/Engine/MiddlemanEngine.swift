@@ -17,8 +17,16 @@ public final class MiddlemanEngine {
     public private(set) var candidates: [MaterialCandidate] = []
     public let maxCandidates = 32
 
+    /// 采集到的、判定该上报的完整 IP 数据报。引擎只管把包交出去，
+    /// 「连哪个节点、要不要密钥、什么时候重连」全由上报端决定。
+    /// 回调在引擎队列上，不能阻塞。
+    public var onUpload: (([UInt8]) -> Void)?
+
     private let counter = StatsCounter()
     private let queue = DispatchQueue(label: "starradar.engine")
+    private let gate = UploadGate()
+    private let keyLock = NSLock()
+    private var keyValue: UploadKey?
     private var server: SOCKS5Server?
     private var relays: [ObjectIdentifier: TCPRelay] = [:]
     private var udpFlows: [String: UDPFlow] = [:]
@@ -36,6 +44,16 @@ public final class MiddlemanEngine {
     public var udpPort: UInt16? { server?.udpRelay?.port }
 
     public func stats() -> EngineStats { counter.snapshot() }
+
+    /// 当前该下发给上报端的对局密钥。
+    ///
+    /// 写方在引擎队列、读方在界面，所以走锁 —— 密钥是结构体，跨线程裸读
+    /// 读到写一半的值在 Swift 里是未定义行为，不是「旧值」那么客气。
+    public var latestKey: UploadKey? {
+        keyLock.lock()
+        defer { keyLock.unlock() }
+        return keyValue
+    }
 
     // MARK: - 生命周期
 
@@ -60,6 +78,7 @@ public final class MiddlemanEngine {
         let intercepts = config.interceptPorts.sorted().map(String.init).joined(separator: ",")
         log.write("引擎启动：TCP \(server.tcpPort.map(String.init) ?? "?")，"
             + "UDP \(server.udpRelay?.port.map(String.init) ?? "?")，拦截端口 [\(intercepts)]")
+        gate.onGame = { [weak self] desc in self?.log.write("识别对局会话：\(desc)") }
         startSweep()
     }
 
@@ -96,7 +115,12 @@ public final class MiddlemanEngine {
             queue: queue,
             counter: counter,
             onPlaintext: { [weak self] direction, frame, plain in
-                self?.inspect(direction: direction, frame: frame, plain: plain)
+                self?.inspect(
+                    session: request.address.hostPort,
+                    direction: direction,
+                    frame: frame,
+                    plain: plain
+                )
             }
         )
         let key = ObjectIdentifier(relay)
@@ -106,7 +130,12 @@ public final class MiddlemanEngine {
         relay.start()
     }
 
-    private func inspect(direction: MiddlemanSession.Direction, frame: TGCPFrame, plain: [UInt8]) {
+    private func inspect(
+        session: String,
+        direction: MiddlemanSession.Direction,
+        frame: TGCPFrame,
+        plain: [UInt8]
+    ) {
         // 只有服务端下发的材料指令里才可能夹带密钥
         guard direction == .serverToClient, frame.command == TGCP.commandMaterial else { return }
 
@@ -134,7 +163,30 @@ public final class MiddlemanEngine {
             log.write("未定型密钥候选：\(frame.commandText) seq=\(frame.sequence) 层次 \(candidate.layer) "
                 + "偏移 \(candidate.offset) 长度 \(candidate.material.count) "
                 + "sha256 \(candidate.digest.prefix(12))…（上下文 \(candidate.context.count) 字节，待验证）")
+            publishKey(session: session, material: candidate.material)
         }
+    }
+
+    /// 把候选材料装成上报端的密钥视图。
+    ///
+    /// 候选是 128 字节材料，正是转发器要的那把 battle material，不需要再推导；
+    /// `key_id` 与 `sha256` 由 `UploadKey` 现算，服务端会逐项重算校验。
+    /// 同一会话同一把材料不重复通知 —— 换局（会话变）或换材料才通知一次。
+    private func publishKey(session: String, material: [UInt8]) {
+        guard let key = UploadKey(
+            session: session,
+            material: material,
+            observedMS: UInt64(Date().timeIntervalSince1970 * 1000),
+            verified: false
+        ) else { return }
+
+        keyLock.lock()
+        let unchanged = keyValue?.session == key.session && keyValue?.sha256 == key.sha256
+        if !unchanged { keyValue = key }
+        keyLock.unlock()
+        guard !unchanged else { return }
+
+        log.write("已装载对局密钥 key_id=\(key.keyID)…（会话 \(session)，待上报端下发）")
     }
 
     // MARK: - UDP
@@ -181,7 +233,46 @@ public final class MiddlemanEngine {
         }
         flow.touch(client: source)
         counter.update { $0.udpDatagramsToUpstream += 1 }
+        // 采集必须排在转发之前：转发出错不影响上报，上报出错（闸门只做纯计数）也不影响转发
+        capture(
+            UDPPacket(
+                src: source.host,
+                dst: datagram.address.host,
+                sport: source.port,
+                dport: datagram.address.port,
+                payload: datagram.payload
+            ),
+            up: true
+        )
         flow.send(datagram.payload)
+    }
+
+    /// 采集一条 UDP 报文。上下行都要走这里 —— 握手签名 7 项里有 4 项在下行，
+    /// 只采上行永远凑不齐，整条流都会被当成随机 UDP 丢掉。
+    private func capture(_ packet: UDPPacket, up: Bool) {
+        let ready = gate.feed(packet, up: up)
+        counter.update {
+            $0.gameFlows = self.gate.gameFlows
+            $0.udpFlowsFiltered = self.gate.signatureFiltered
+        }
+        guard !ready.isEmpty else { return }
+
+        for item in ready {
+            guard let datagram = IPDatagram.make(
+                src: item.src,
+                dst: item.dst,
+                sport: item.sport,
+                dport: item.dport,
+                payload: item.payload
+            ) else {
+                // 远端是域名或 IPv6，拼不出 IPv4 报文：上报通道传的就是数据报本身
+                counter.update { $0.udpUnbuildable += 1 }
+                continue
+            }
+            guard let onUpload else { continue }
+            onUpload(datagram)
+            counter.update { $0.udpUploaded += 1 }
+        }
     }
 
     private func udpFlow(
@@ -197,7 +288,8 @@ public final class MiddlemanEngine {
             queue: queue,
             relay: relay,
             counter: counter,
-            onLog: { [weak self] message in self?.log.write(message) }
+            onLog: { [weak self] message in self?.log.write(message) },
+            onCapture: { [weak self] packet, up in self?.capture(packet, up: up) }
         ) else {
             return nil
         }
@@ -465,6 +557,8 @@ private final class UDPFlow {
     private let counter: StatsCounter
     private let relay: SOCKS5UDPRelay
     private let onLog: (String) -> Void
+    /// 下行采集。上游回包只在这里出现，不接上就永远凑不齐握手签名
+    private let onCapture: (UDPPacket, Bool) -> Void
     private var client: SOCKS5Address
     private var cancelled = false
 
@@ -474,7 +568,8 @@ private final class UDPFlow {
         queue: DispatchQueue,
         relay: SOCKS5UDPRelay,
         counter: StatsCounter,
-        onLog: @escaping (String) -> Void
+        onLog: @escaping (String) -> Void,
+        onCapture: @escaping (UDPPacket, Bool) -> Void
     ) {
         guard let port = NWEndpoint.Port(rawValue: target.port), target.port != 0 else { return nil }
         let parameters = NWParameters.udp
@@ -484,6 +579,7 @@ private final class UDPFlow {
         self.relay = relay
         self.counter = counter
         self.onLog = onLog
+        self.onCapture = onCapture
         self.connection = NWConnection(
             to: .hostPort(host: NWEndpoint.Host(target.host), port: port),
             using: parameters
@@ -525,8 +621,20 @@ private final class UDPFlow {
             if let data, !data.isEmpty {
                 self.lastActivity = Date()
                 self.counter.update { $0.udpDatagramsFromUpstream += 1 }
+                let bytes = [UInt8](data)
+                // 先采集再回客户端：这条包就是签名第 2/4/6/7 项要等的东西
+                self.onCapture(
+                    UDPPacket(
+                        src: self.target.host,
+                        dst: self.client.host,
+                        sport: self.target.port,
+                        dport: self.client.port,
+                        payload: bytes
+                    ),
+                    false
+                )
                 self.relay.sendToClient(
-                    payload: [UInt8](data),
+                    payload: bytes,
                     from: self.target,
                     to: self.client
                 )

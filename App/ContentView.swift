@@ -82,6 +82,18 @@ struct ContentView: View {
                     .textInputAutocapitalization(.never)
                     .disabled(model.isRunning)
             }
+            LabeledContent("密钥覆盖") {
+                TextField("留空则用自动抽取", text: $model.keyOverrideText)
+                    .font(.system(.caption, design: .monospaced))
+                    .multilineTextAlignment(.trailing)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            }
+            if let error = model.keyOverrideError {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
             LabeledContent("上报", value: model.reportConnectionSummary)
             if model.reportConfigured {
                 LabeledContent("已发 / 补发", value: "\(model.reportStats.sent) / \(model.reportStats.resent)")
@@ -98,7 +110,7 @@ struct ContentView: View {
         } header: {
             Text("WebSocket 上报")
         } footer: {
-            Text("订阅地址是转发器节点，只填 IP 就按默认端口 1082；房间 Key 同时是预共享密钥与房间号，必须与服务端一致。两项都留空就不上报；地址与 Key 只能在停止后修改。")
+            Text("订阅地址是转发器节点，只填 IP 就按默认端口 1082；房间 Key 同时是预共享密钥与房间号，必须与服务端一致。两项都留空就不上报；地址与 Key 只能在停止后修改。密钥覆盖填 128 字节十六进制后即压过自动抽取的候选（自动抽取是照 base64 形状猜的，猜错时可手工顶掉），改动立刻生效。")
         }
     }
 
@@ -114,6 +126,8 @@ struct ContentView: View {
             LabeledContent("已翻译帧 / 失败", value: "\(model.stats.translatedFrames) / \(model.stats.translateFailures)")
             LabeledContent("UDP 上行 / 下行", value: "\(model.stats.udpDatagramsToUpstream) / \(model.stats.udpDatagramsFromUpstream)")
             LabeledContent("UDP 流", value: "\(model.stats.udpFlows)")
+            LabeledContent("对局流 / 上报过滤", value: "\(model.stats.gameFlows) / \(model.stats.udpFlowsFiltered)")
+            LabeledContent("已入队 / 未能组装", value: "\(model.stats.udpUploaded) / \(model.stats.udpUnbuildable)")
             if let lastError = model.stats.lastError {
                 Text(lastError).font(.footnote).foregroundStyle(.red)
             }
