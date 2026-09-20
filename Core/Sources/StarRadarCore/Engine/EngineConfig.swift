@@ -9,7 +9,8 @@ public struct EngineConfig {
     /// 自动探测不准时必须手工指定 —— 客户端拿到错地址就连不上 UDP 中继。
     public var advertisedHost: String?
     /// 需要做 DH 中间人的 TCP 目标端口。其余流量原样转发。
-    /// 原实现抓的是 158。
+    /// 真实游戏端口是 65010。原实现里的 158 是从服务器 IP `123.99.198.158`
+    /// 的尾巴上误读出来的，按它拦永远拦不到东西。
     public var interceptPorts: Set<UInt16>
     /// UDP flow 空闲回收时间
     public var udpIdleTimeout: TimeInterval
@@ -19,7 +20,7 @@ public struct EngineConfig {
     public init(
         listenPort: UInt16 = 1080,
         advertisedHost: String? = nil,
-        interceptPorts: Set<UInt16> = [158],
+        interceptPorts: Set<UInt16> = [65010],
         udpIdleTimeout: TimeInterval = 120,
         maxUDPFlows: Int = 256
     ) {

@@ -13,7 +13,7 @@ final class EngineViewModel: ObservableObject {
 
     @Published var portText = "1080"
     @Published var advertisedHost = ""
-    @Published var interceptPortsText = "158"
+    @Published var interceptPortsText = "65010"
     @Published var errorMessage: String?
 
     /// 上报节点地址。只填 IP 就按默认端口 1082
@@ -186,7 +186,7 @@ final class EngineViewModel: ObservableObject {
         let ports = interceptPortsText
             .split(separator: ",")
             .compactMap { UInt16($0.trimmingCharacters(in: .whitespaces)) }
-        engine.config.interceptPorts = Set(ports.isEmpty ? [158] : ports)
+        engine.config.interceptPorts = Set(ports.isEmpty ? [65010] : ports)
     }
 
     private func startPolling() {

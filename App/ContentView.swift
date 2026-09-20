@@ -43,7 +43,7 @@ struct ContentView: View {
                     .disabled(model.isRunning)
             }
             LabeledContent("拦截端口") {
-                TextField("158", text: $model.interceptPortsText)
+                TextField("65010", text: $model.interceptPortsText)
                     .keyboardType(.numbersAndPunctuation)
                     .multilineTextAlignment(.trailing)
                     .disabled(model.isRunning)
