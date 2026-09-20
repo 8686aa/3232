@@ -1,0 +1,49 @@
+# XcodeGen 描述文件：CI 靠它生成 StarRadar.xcodeproj（本机是 Windows，没有 Xcode，
+# 所以工程文件不入库，一律现场生成，避免 pbxproj 手改不同步）。
+# 本地 macOS 上等价于：brew install xcodegen && xcodegen generate
+name: StarRadar
+
+options:
+  bundleIdPrefix: com.starradar
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+packages:
+  StarRadarCore:
+    path: Core
+
+targets:
+  StarRadar:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+        # Info.plist 走 INFOPLIST_FILE 进包，不能再进 Copy Resources，
+        # 否则 Xcode 报 "Multiple commands produce Info.plist"
+        excludes:
+          - Info.plist
+    dependencies:
+      - package: StarRadarCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.starradar.middleman
+        INFOPLIST_FILE: App/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        # 未签名打包：CI 上没有证书，签名相关的全部关掉，
+        # 产出的 .app 交给重签工具（AltStore / Sideloadly / 爱思）处理
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+
+schemes:
+  StarRadar:
+    build:
+      targets:
+        StarRadar: all
+    run:
+      config: Debug
+    archive:
+      config: Release

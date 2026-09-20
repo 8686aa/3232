@@ -1,0 +1,70 @@
+name: build-unsigned-ipa
+
+# 本机是 Windows，没有 iOS SDK，只能借 GitHub 的 macOS runner 编译。
+# 推 main 或手动触发都会产出未签名 IPA。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ipa:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      # 协议层纯逻辑测试能在 macOS 上直接跑，先跑一遍当编译检查；
+      # 失败不阻塞打包 —— 我们要的是 IPA，测试红不红看日志
+      - name: 协议层单测
+        continue-on-error: true
+        working-directory: Core
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee ../swift-test.log
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate
+
+      - name: 编译（关闭签名）
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project StarRadar.xcodeproj \
+            -scheme StarRadar \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee xcodebuild.log
+
+      - name: 打成未签名 IPA
+        if: success()
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/StarRadar.app Payload/
+          zip -qry StarRadar-unsigned.ipa Payload
+          ls -lh StarRadar-unsigned.ipa
+
+      - name: 上传 IPA
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarRadar-unsigned-ipa
+          path: StarRadar-unsigned.ipa
+          if-no-files-found: error
+
+      # 编译失败时唯一的取证手段：日志作为产物，下载后贴回来定位错误
+      - name: 上传编译日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: "*.log"
+          if-no-files-found: ignore
