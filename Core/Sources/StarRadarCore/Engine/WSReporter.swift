@@ -311,11 +311,12 @@ public final class WSReporter {
         self.work = queue
         self.scheduler = scheduler ?? DispatchReporterScheduler(queue: queue)
         self.transportFactory = transportFactory ?? {
+            // 这里只能抓 `log` 形参，不能写 self —— 此刻成员还没初始化完
             WebSocketTransport(
                 queue: queue,
                 writeTimeout: config.writeTimeout,
                 dialTimeout: config.dialTimeout,
-                diagnostics: { [weak self] line in self?.log("[ws] \(line)") }
+                diagnostics: { log("[ws] \($0)") }
             )
         }
         self.log = log
