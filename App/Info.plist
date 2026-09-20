@@ -35,5 +35,18 @@
 	     否则 iOS 14+ 会直接掐断监听/连接且不报错 -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>需要接受同一局域网内设备的 SOCKS5 连接，才能作为中间人转发流量。</string>
+	<!-- 节点地址（ws://…:1082）与雷达服务（http://…:666）都是明文，且 IP 由用户在界面自填，
+	     无法预先声明域名白名单，只能整体放开：
+	       · NSAllowsArbitraryLoads           → URLSession 的明文请求（雷达校验走的就是它）
+	       · NSAllowsArbitraryLoadsInWebContent → 内置 WebView 加载的 http 页面
+	     两个键同时为 true 时，iOS 10+ 会分别作用于「非网页内容」与「网页内容」两条通路，
+	     只写前者的话 WebView 仍会被挡。 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
