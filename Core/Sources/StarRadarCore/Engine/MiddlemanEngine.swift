@@ -165,10 +165,7 @@ public final class MiddlemanEngine {
             candidates.append(candidate)
             if candidates.count > maxCandidates { candidates.removeFirst() }
             counter.update { $0.cryptoCandidates = self.candidateDigests.count }
-            // 「未定型」是原实现的用词：候选不等于可用，必须由下游用真实 UDP 战斗包验证后才装载
-            log.write("未定型密钥候选：\(frame.commandText) seq=\(frame.sequence) 层次 \(candidate.layer) "
-                + "偏移 \(candidate.offset) 长度 \(candidate.material.count) "
-                + "sha256 \(candidate.digest.prefix(12))…（上下文 \(candidate.context.count) 字节，待验证）")
+            // 候选不等于可用：必须由下游用真实 UDP 战斗包验证后才装载
             publishKey(session: session, material: candidate.material)
         }
     }
@@ -177,7 +174,7 @@ public final class MiddlemanEngine {
     ///
     /// 候选是 128 字节材料，正是转发器要的那把 battle material，不需要再推导；
     /// `key_id` 与 `sha256` 由 `UploadKey` 现算，服务端会逐项重算校验。
-    /// 同一会话同一把材料不重复通知 —— 换局（会话变）或换材料才通知一次。
+    /// 同一会话同一把材料不重复写回 —— 换局（会话变）或换材料才写一次。
     private func publishKey(session: String, material: [UInt8]) {
         guard let key = UploadKey(
             session: session,
@@ -187,12 +184,10 @@ public final class MiddlemanEngine {
         ) else { return }
 
         keyLock.lock()
-        let unchanged = keyValue?.session == key.session && keyValue?.sha256 == key.sha256
-        if !unchanged { keyValue = key }
+        if keyValue?.session != key.session || keyValue?.sha256 != key.sha256 {
+            keyValue = key
+        }
         keyLock.unlock()
-        guard !unchanged else { return }
-
-        log.write("已装载对局密钥 key_id=\(key.keyID)…（会话 \(session)，待上报端下发）")
     }
 
     // MARK: - UDP

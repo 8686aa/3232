@@ -19,7 +19,6 @@ struct ContentView: View {
                     nodeSection
                     keySection
                     portSection
-                    advancedSection
                     statsSection
                     radarSection
                     waveSection
@@ -179,16 +178,6 @@ struct ContentView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 8)
             neonField($model.roomKeyText, placeholder: "32 位房间 Key", keyboard: .asciiCapable)
-            neonField($model.keyOverrideText,
-                      placeholder: "覆盖密钥（128 字节 hex，留空即自动抽取）",
-                      keyboard: .asciiCapable)
-                .padding(.top, 8)
-            if let error = model.keyOverrideError {
-                Text(error)
-                    .font(Fonts.mono(10))
-                    .foregroundColor(P.color(P.RED))
-                    .padding(.top, 6)
-            }
         }
     }
 
@@ -201,22 +190,6 @@ struct ContentView: View {
                 .padding(.bottom, 8)
             neonField($model.portText, placeholder: "1010", keyboard: .numberPad)
                 .frame(width: 118)
-                .disabled(model.isRunning)
-        }
-    }
-
-    // MARK: - 转发（高级）
-
-    private var advancedSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            sectionHeader("转发（高级）", bar: P.AMBER, trailing: nil)
-                .padding(.top, 16)
-                .padding(.bottom, 8)
-            neonField($model.advertisedHost, placeholder: "对外地址（留空自动探测）")
-                .disabled(model.isRunning)
-            neonField($model.interceptPortsText, placeholder: "拦截端口，如 65010",
-                      keyboard: .numbersAndPunctuation)
-                .padding(.top, 8)
                 .disabled(model.isRunning)
         }
     }

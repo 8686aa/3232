@@ -65,14 +65,14 @@ extension RadarRouter {
     /// 开始监听后调用：向 <节点IP>:666 校验房间Key，服务端回 {"ok":true,"url":"…"} 时打开该链接。
     func openShare(host: String, apiKey: String) {
         guard !apiKey.isEmpty else {
-            log?("[雷达] 房间Key 为空，不自动打开雷达页")
+            log?("[雷达] 房间未配置，不自动打开雷达页")
             return
         }
         guard let url = shareByKeyURL(host: host, apiKey: apiKey) else {
             log?("[雷达] 无法从节点 \(host) 推导雷达服务地址，跳过自动打开")
             return
         }
-        log?("[雷达] 校验 key …")
+        log?("[雷达] 正在向节点校验房间…")
         var req = URLRequest(url: url)
         req.timeoutInterval = 6
         req.cachePolicy = .reloadIgnoringLocalCacheData
@@ -87,7 +87,7 @@ extension RadarRouter {
                     link = text
                     let name = obj["username"] as? String ?? ""
                     let code = obj["code"] as? String ?? ""
-                    message = "key 校验通过（\(name) / \(code)），打开雷达页"
+                    message = "校验通过（\(name) / \(code)），打开雷达页"
                 } else {
                     message = "校验失败：\(obj["error"] as? String ?? "未知错误")"
                 }

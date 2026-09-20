@@ -138,16 +138,6 @@ final class EngineViewModel: ObservableObject {
         return String(format: "%.1fs", Double(latMs) / 1000.0)
     }
 
-    /// 手动覆盖文本的解析结果。nil = 没填或填得对，非 nil 是给界面看的错误说明
-    var keyOverrideError: String? {
-        let text = keyOverrideText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return nil }
-        guard UploadKey.material(fromHex: text) != nil else {
-            return "覆盖密钥需为 128 字节十六进制（256 个字符）"
-        }
-        return nil
-    }
-
     // MARK: - 日志
 
     private func append(_ line: String, _ level: Level? = nil) {

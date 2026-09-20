@@ -510,8 +510,7 @@ public final class WSReporter {
         connection.ready = true
         connection.authTask?.cancel()
         connection.authTask = nil
-        log("[ws] 鉴权通过 room=\(SecureWS.roomID(config.apiKey).prefix(8))… "
-            + "节点 \(config.address.host):\(config.address.port)")
+        log("[ws] 鉴权通过，节点 \(config.address.host):\(config.address.port)")
 
         // 新连接上转发器可能已经把密钥状态丢了，必须重发一次
         keyDirty = true
@@ -671,7 +670,7 @@ public final class WSReporter {
             guard let self else { return }
             guard ok else {
                 // 密钥丢了不能继续发包：保持 dirty，等重连再发
-                self.failSession(connection, "密钥下发未完成（\(key.keyID.prefix(8))…），等待重连续发")
+                self.failSession(connection, "密钥下发未完成，等待重连续发")
                 completion(false)
                 return
             }
