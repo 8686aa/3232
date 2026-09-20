@@ -257,7 +257,8 @@ public final class MiddlemanEngine {
     /// 只采上行永远凑不齐，整条流都会被当成随机 UDP 丢掉。
     private func capture(_ packet: UDPPacket, up: Bool) {
         // 链路快照先记：挡下的报文同样属于「代理上跑过的流量」
-        onFlow?(up, packet.src, packet.sport, packet.dst, packet.dport, packet.payload.count)
+        onFlow?(up, packet.src, Int(packet.sport), packet.dst, Int(packet.dport),
+                packet.payload.count)
 
         let ready = gate.feed(packet, up: up)
         counter.update {
