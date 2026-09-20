@@ -9,7 +9,11 @@ public struct MaterialCandidate: Equatable {
     public let digest: String
     public let material: [UInt8]
     public let layer: String
+    /// 命中处在所在层里的**字节**偏移
     public let offset: Int
+    /// 命中处前后各 `contextRadius` 字节的上下文，原实现随候选一起交给下游。
+    /// 材料往往夹在半截 protobuf 里，只给 128 字节没法判断它属于哪条指令字段。
+    public let context: [UInt8]
 }
 
 /// 明文层次 + base64 候选扫描，对应原实现的 `inspection_layers` 与 `BASE64_RUN`。
@@ -18,6 +22,8 @@ public enum MaterialExtractor {
     public static let materialLength = 128
     /// 原实现对明文长度设了上限才尝试解压
     public static let inspectionLimit = 524_288
+    /// 候选上下文的半径，与原实现一致
+    public static let contextRadius = 2048
 
     /// 与原实现完全一致的模式：前后不能邻接 base64 字符，长度 160…220，最多 2 个填充符
     private static let pattern = "(?<![A-Za-z0-9+/=])([A-Za-z0-9+/]{160,220}={0,2})(?![A-Za-z0-9+/=])"
@@ -38,22 +44,30 @@ public enum MaterialExtractor {
         guard let regex else { return [] }
         var out: [MaterialCandidate] = []
         for layer in layers(plain) {
-            // base64 字母表全是 ASCII，非 ASCII 字节会被替换成 U+FFFD，
-            // 正好起到「分隔符」的作用，划分边界与按字节正则一致。
-            let text = String(decoding: layer.data, as: UTF8.self)
-            let full = NSRange(text.startIndex..<text.endIndex, in: text)
+            // 按 Latin-1 解码：每个字节恰好落成一个 UTF-16 单元，于是 NSRange 的偏移就是**字节**偏移
+            // —— 原实现是在 bytes 上跑正则，给的也是字节偏移。
+            // 之前用 UTF-8 解码，非 ASCII 字节被折成单个 U+FFFD，偏移量会偏小。
+            guard let text = String(data: Data(layer.data), encoding: .isoLatin1) else { continue }
+            let full = NSRange(location: 0, length: text.utf16.count)
             for match in regex.matches(in: text, range: full) {
-                guard let range = Range(match.range(at: 1), in: text) else { continue }
-                guard let decoded = Data(base64Encoded: String(text[range])) else { continue }
+                let hit = match.range(at: 1)
+                guard hit.location != NSNotFound else { continue }
+                let end = hit.location + hit.length
+                guard let decoded = Data(base64Encoded: Data(layer.data[hit.location..<end])) else {
+                    continue
+                }
                 guard decoded.count == materialLength else { continue }
                 let digest = SHA256.hash(data: decoded)
                     .map { String(format: "%02x", $0) }
                     .joined()
+                let begin = max(0, hit.location - contextRadius)
+                let stop = min(layer.data.count, end + contextRadius)
                 out.append(MaterialCandidate(
                     digest: digest,
                     material: [UInt8](decoded),
                     layer: layer.name,
-                    offset: text.distance(from: text.startIndex, to: range.lowerBound)
+                    offset: hit.location,
+                    context: Array(layer.data[begin..<stop])
                 ))
             }
         }

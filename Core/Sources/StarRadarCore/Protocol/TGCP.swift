@@ -209,8 +209,21 @@ public final class TGCPFramer {
 public enum LZ4Payload {
     public static let maxDecompressedSize = 4_194_304
 
+    /// 返回 `(解压结果, 说明)`，说明取值沿用原实现：
+    /// 成功为 `lz4.block`，失败为 `lz4 failed: …`。原实现还有「lz4 模块缺失」一态，
+    /// Swift 侧走系统 Compression 框架，不存在这一态。
+    ///
+    /// 说明文字会被写进压缩事件日志（`result` 字段），所以要带上失败原因。
+    public static func decompress(_ data: [UInt8]) -> (data: [UInt8]?, note: String) {
+        guard !data.isEmpty else { return (nil, "lz4 failed: empty input") }
+        do {
+            return (try LZ4Block.decompress(data, maxSize: maxDecompressedSize), "lz4.block")
+        } catch {
+            return (nil, "lz4 failed: \(error)")
+        }
+    }
+
     public static func decompressIfNeeded(_ data: [UInt8]) -> [UInt8]? {
-        guard !data.isEmpty else { return nil }
-        return try? LZ4Block.decompress(data, maxSize: maxDecompressedSize)
+        decompress(data).data
     }
 }

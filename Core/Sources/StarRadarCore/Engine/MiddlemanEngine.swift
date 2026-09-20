@@ -23,6 +23,8 @@ public final class MiddlemanEngine {
     private var relays: [ObjectIdentifier: TCPRelay] = [:]
     private var udpFlows: [String: UDPFlow] = [:]
     private var candidateDigests: Set<String> = []
+    /// 见过的「压缩方法 + 是否解得开」组合，对应原实现的 `Session.compression`
+    private var compressionMarkers: Set<String> = []
     private var sweepTimer: DispatchSourceTimer?
 
     public init(config: EngineConfig = EngineConfig()) {
@@ -107,14 +109,31 @@ public final class MiddlemanEngine {
     private func inspect(direction: MiddlemanSession.Direction, frame: TGCPFrame, plain: [UInt8]) {
         // 只有服务端下发的材料指令里才可能夹带密钥
         guard direction == .serverToClient, frame.command == TGCP.commandMaterial else { return }
+
+        // 头扩展首字节非零表示报文体是压缩的。同一「方法 + 是否解得开」只记一条，
+        // 否则每个材料帧都会重复刷一遍 —— 原实现用 `Session.compression` 做同样的去重。
+        if frame.header.count > TGCP.extensionOffset {
+            let method = frame.header[TGCP.extensionOffset]
+            if method != 0 {
+                let (decompressed, note) = LZ4Payload.decompress(plain)
+                let marker = "\(method)/\(decompressed == nil)"
+                if compressionMarkers.insert(marker).inserted {
+                    log.write("压缩：\(frame.commandText) seq=\(frame.sequence) 方法 \(method) "
+                        + "结果 \(note) 输出 \(decompressed?.count ?? 0) 字节")
+                }
+            }
+        }
+
         for candidate in MaterialExtractor.candidates(in: plain) {
             guard !candidateDigests.contains(candidate.digest) else { continue }
             candidateDigests.insert(candidate.digest)
             candidates.append(candidate)
             if candidates.count > maxCandidates { candidates.removeFirst() }
             counter.update { $0.cryptoCandidates = self.candidateDigests.count }
-            log.write("候选密钥：\(candidate.material.count) 字节，层次 \(candidate.layer)，"
-                + "偏移 \(candidate.offset)，sha256 \(candidate.digest.prefix(12))…（待验证）")
+            // 「未定型」是原实现的用词：候选不等于可用，必须由下游用真实 UDP 战斗包验证后才装载
+            log.write("未定型密钥候选：\(frame.commandText) seq=\(frame.sequence) 层次 \(candidate.layer) "
+                + "偏移 \(candidate.offset) 长度 \(candidate.material.count) "
+                + "sha256 \(candidate.digest.prefix(12))…（上下文 \(candidate.context.count) 字节，待验证）")
         }
     }
 
@@ -269,6 +288,7 @@ private final class TCPRelay {
         upstream = connection
         if let session {
             session.onLog = { [weak self] message in self?.onLog?(message) }
+            session.onFrame = { [weak self] event in self?.onLog?(event.text) }
             onLog?("中间人会话开始 → \(target.hostPort)")
         } else {
             onLog?("纯转发 → \(target.hostPort)")

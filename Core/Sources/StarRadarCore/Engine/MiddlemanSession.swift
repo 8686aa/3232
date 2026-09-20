@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum MiddlemanError: Error, CustomStringConvertible {
@@ -33,8 +34,41 @@ public final class MiddlemanSession {
         public var label: String { self == .clientToServer ? "c2s" : "s2c" }
     }
 
+    /// 一帧的处理结论，对应原实现的 `log_frame(direction, frame, action, **fields)`。
+    ///
+    /// 原实现把它写成一条结构化日志，字段名沿用同一套；iOS 侧只有文本日志，
+    /// 所以保留了 `fields` 的键名并额外提供 `text` 供渲染。
+    public struct FrameEvent {
+        /// 动作名，取值与原实现一致：
+        /// `rewrite-client-hello` / `rewrite-server-hello` / `translate-body` / `pass-empty` / `pass-plaintext`
+        public let action: String
+        public let direction: Direction
+        public let command: UInt16
+        public let sequence: UInt32
+        public let gate: UInt8
+        public let headerLength: Int
+        public let bodyLength: Int
+        public let offset: Int
+        /// 该动作特有的字段，键名与原实现一致
+        public let fields: [(String, String)]
+
+        public var text: String {
+            var parts = [
+                "帧 \(direction.label) \(TGCP.commandName(command)) seq=\(sequence)",
+                "动作 \(action)",
+                "gate=\(gate)",
+                "头 \(headerLength) 体 \(bodyLength)",
+                "偏移 \(offset)"
+            ]
+            parts.append(contentsOf: fields.map { "\($0.0)=\($0.1)" })
+            return parts.joined(separator: " ")
+        }
+    }
+
     /// 解出来的应用层明文，交给上层去提取候选密钥
     public var onPlaintext: ((Direction, TGCPFrame, [UInt8]) -> Void)?
+    /// 逐帧处理结论，等价于原实现的 `log_frame`
+    public var onFrame: ((FrameEvent) -> Void)?
     public var onLog: ((String) -> Void)?
 
     /// 首包不是 TGCP 流时整体退化为原样转发
@@ -55,6 +89,8 @@ public final class MiddlemanSession {
     private var clientKey: [UInt8]?
     private var serverKey: [UInt8]?
     private var framingDecided = false
+    /// `方向:指令:动作` 的出现次数，对应原实现 `log_frame` 里的 `counts`
+    private var frameCounts: [String: Int] = [:]
 
     /// 只由引擎内部创建（`StatsCounter` 不对外暴露）
     init(counter: StatsCounter) {
@@ -103,6 +139,44 @@ public final class MiddlemanSession {
         return try translateApplication(frame, direction).packed()
     }
 
+    // MARK: - 逐帧日志
+
+    /// 对应原实现的 `log_frame`：同一「方向:指令:动作」只输出**首次**，其余只计数。
+    /// 没有这层去重，`translate-body` 会按帧刷屏，握手那几行真正的关键信息就被埋了。
+    private func logFrame(
+        _ action: String,
+        _ frame: TGCPFrame,
+        _ direction: Direction,
+        _ fields: [(String, String)] = []
+    ) {
+        let key = "\(direction.label):\(frame.commandText):\(action)"
+        let count = (frameCounts[key] ?? 0) + 1
+        frameCounts[key] = count
+        guard count == 1 else { return }
+        onFrame?(FrameEvent(
+            action: action,
+            direction: direction,
+            command: frame.command,
+            sequence: frame.sequence,
+            gate: frame.gate,
+            headerLength: frame.headerLength,
+            bodyLength: frame.bodyLength,
+            offset: frame.streamOffset,
+            fields: fields
+        ))
+    }
+
+    /// 公钥摘要。原实现先 `fixed_be` 定长再 sha256 —— 对端可能省掉前导零，
+    /// 不定长的话同一个公钥会算出两个摘要。
+    private static func digest(_ value: BigUInt) -> String {
+        let bytes = value.bigEndianBytes(fixedSize: RawDH.publicBytes) ?? value.bigEndianBytes()
+        return SHA256.hash(data: Data(bytes)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func digest(_ bytes: [UInt8]) -> String {
+        SHA256.hash(data: Data(bytes)).map { String(format: "%02x", $0) }.joined()
+    }
+
     // MARK: - 握手
 
     private func handleClientHello(_ frame: TGCPFrame) throws -> TGCPFrame {
@@ -121,7 +195,11 @@ public final class MiddlemanSession {
 
         // 把客户端的公钥换成我们自己的，服务端以为在和我们握手
         let header = try TGCP.replacingDHPublic(header: frame.header, with: serverSide.publicBytes)
-        onLog?("ClientHello：已替换 DH 公钥，clientKey 就绪")
+        logFrame("rewrite-client-hello", frame, .clientToServer, [
+            ("peer_public_sha256", Self.digest(field.value)),
+            ("replacement_public_sha256", Self.digest(serverSide.publicBytes)),
+            ("client_key_ready", "true")
+        ])
         return TGCPFrame(header: header, body: frame.body, streamOffset: frame.streamOffset)
     }
 
@@ -140,13 +218,21 @@ public final class MiddlemanSession {
 
         let header = try TGCP.replacingDHPublic(header: frame.header, with: clientSide.publicBytes)
         var body = frame.body
+        var bodyTranslated = false
         // ServerHello 自带一段密文体时，就地用 serverKey 解、clientKey 重加密
         if !body.isEmpty, frame.gate != 0 {
             guard let clientKey else { throw MiddlemanError.handshakeIncomplete("clientKey") }
             body = try NativeAES.translate(body: body, source: key, destination: clientKey).cipher
             counter.update { $0.translatedFrames += 1 }
+            bodyTranslated = true
         }
-        onLog?("ServerHello：已替换 DH 公钥，serverKey 就绪")
+        logFrame("rewrite-server-hello", frame, .serverToClient, [
+            ("peer_public_sha256", Self.digest(field.value)),
+            ("replacement_public_sha256", Self.digest(clientSide.publicBytes)),
+            ("server_key_ready", "true"),
+            ("body_translated", bodyTranslated ? "true" : "false"),
+            ("new_body_len", "\(body.count)")
+        ])
         return TGCPFrame(header: header, body: body, streamOffset: frame.streamOffset)
     }
 
@@ -156,10 +242,14 @@ public final class MiddlemanSession {
         guard serverPublic != nil else {
             throw MiddlemanError.handshakeIncomplete("尚未收到 ServerHello")
         }
-        guard !frame.body.isEmpty else { return frame }
+        guard !frame.body.isEmpty else {
+            logFrame("pass-empty", frame, direction)
+            return frame
+        }
         // s2c 且 gate=0 是明文直通（原实现同样放行）
         if direction == .serverToClient && frame.gate == 0 {
             onPlaintext?(direction, frame, frame.body)
+            logFrame("pass-plaintext", frame, direction)
             return frame
         }
 
@@ -172,6 +262,10 @@ public final class MiddlemanSession {
         let result = try NativeAES.translate(body: frame.body, source: source, destination: destination)
         counter.update { $0.translatedFrames += 1 }
         onPlaintext?(direction, frame, result.plain)
+        logFrame("translate-body", frame, direction, [
+            ("plain_len", "\(result.plain.count)"),
+            ("new_body_len", "\(result.cipher.count)")
+        ])
         return frame.replacingBody(result.cipher)
     }
 }

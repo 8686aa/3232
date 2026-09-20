@@ -1,5 +1,11 @@
+import CryptoKit
 import XCTest
 @testable import StarRadarCore
+
+/// 给逐帧日志里的公钥摘要当对照组
+func sha256Hex(_ bytes: [UInt8]) -> String {
+    SHA256.hash(data: Data(bytes)).map { String(format: "%02x", $0) }.joined()
+}
 
 /// 原生填充方案与原实现逐长度对齐：尾部 6 字节 = `tsf4g` + 填充计数，
 /// 且填充计数**包含**这 6 字节，所以 pad ∈ [6, 21] 且 size + pad 必为 16 的倍数。
@@ -383,6 +389,121 @@ final class MiddlemanSessionTests: XCTestCase {
         XCTAssertFalse(session.isFraming)
         XCTAssertFalse(session.isReady)
     }
+
+    /// 逐帧日志对齐原实现 `log_frame(方向, 帧, 动作, **字段)`：
+    /// 动作名固定，公钥摘要必须等于**真正发出去**的那份公钥，否则日志在骗人
+    func testHandshakeFrameEventsExposePublicKeyDigests() throws {
+        let session = MiddlemanSession(counter: StatsCounter())
+        var events: [MiddlemanSession.FrameEvent] = []
+        session.onFrame = { events.append($0) }
+
+        let clientSide = RawDHSide.create()
+        let serverSide = RawDHSide.create()
+        let forwarded = try singleFrame(try session.process(
+            makeTGCPFrame(command: TGCP.commandClientHello, dhPublic: clientSide.publicBytes),
+            direction: .clientToServer
+        ))
+        let returned = try singleFrame(try session.process(
+            makeTGCPFrame(command: TGCP.commandServerHello, dhPublic: serverSide.publicBytes),
+            direction: .serverToClient
+        ))
+
+        XCTAssertEqual(events.map(\.action), ["rewrite-client-hello", "rewrite-server-hello"])
+        XCTAssertEqual(events[0].direction, .clientToServer)
+        XCTAssertEqual(events[0].command, TGCP.commandClientHello)
+
+        let clientHello = Dictionary(uniqueKeysWithValues: events[0].fields)
+        XCTAssertEqual(clientHello["peer_public_sha256"], sha256Hex(clientSide.publicBytes))
+        XCTAssertEqual(
+            clientHello["replacement_public_sha256"],
+            sha256Hex(try forwardedPublicDigestSource(forwarded))
+        )
+        XCTAssertEqual(clientHello["client_key_ready"], "true")
+
+        let serverHello = Dictionary(uniqueKeysWithValues: events[1].fields)
+        XCTAssertEqual(serverHello["peer_public_sha256"], sha256Hex(serverSide.publicBytes))
+        XCTAssertEqual(
+            serverHello["replacement_public_sha256"],
+            sha256Hex(try forwardedPublicDigestSource(returned))
+        )
+        XCTAssertEqual(serverHello["server_key_ready"], "true")
+        XCTAssertEqual(serverHello["body_translated"], "false")
+        XCTAssertEqual(serverHello["new_body_len"], "0")
+    }
+
+    /// `translate-body` 报出解密前后长度；同一「方向:指令:动作」只记一条，避免按帧刷屏
+    func testApplicationFrameEventsReportLengthsAndDeduplicate() throws {
+        let session = MiddlemanSession(counter: StatsCounter())
+        var events: [MiddlemanSession.FrameEvent] = []
+        session.onFrame = { events.append($0) }
+
+        let clientSide = RawDHSide.create()
+        let serverSide = RawDHSide.create()
+        let forwarded = try singleFrame(try session.process(
+            makeTGCPFrame(command: TGCP.commandClientHello, dhPublic: clientSide.publicBytes),
+            direction: .clientToServer
+        ))
+        let serverKey = try XCTUnwrap(
+            serverSide.deriveKey(peerPublic: try TGCP.parseDHPublic(header: forwarded.header).value)
+        )
+        let returned = try singleFrame(try session.process(
+            makeTGCPFrame(command: TGCP.commandServerHello, dhPublic: serverSide.publicBytes),
+            direction: .serverToClient
+        ))
+        let clientKey = try XCTUnwrap(
+            clientSide.deriveKey(peerPublic: try TGCP.parseDHPublic(header: returned.header).value)
+        )
+        events.removeAll()
+
+        let payload = Array("battle-material".utf8)
+        let padded = NativeAES.pad(payload)
+        let frame = makeTGCPFrame(
+            command: 0x2001,
+            gate: 1,
+            sequence: 7,
+            body: try NativeAES.encrypt(padded, key: clientKey)
+        )
+        let first = try singleFrame(try session.process(frame, direction: .clientToServer))
+        XCTAssertEqual(try NativeAES.strip(try NativeAES.decrypt(first.body, key: serverKey)), payload)
+        // 同样的密文再来一遍：翻译照样执行，日志不该再出一条
+        _ = try session.process(frame, direction: .clientToServer)
+
+        XCTAssertEqual(events.map(\.action), ["translate-body"], "重复动作只该记一次")
+        let fields = Dictionary(uniqueKeysWithValues: events[0].fields)
+        XCTAssertEqual(fields["plain_len"], "\(payload.count)")
+        XCTAssertEqual(fields["new_body_len"], "\(padded.count)")
+        XCTAssertEqual(events[0].sequence, 7)
+        XCTAssertEqual(events[0].gate, 1)
+    }
+
+    /// gate=0 的 s2c 直通也要留一条 `pass-plaintext`，否则「捞不到候选」时无从判断是没材料还是没走到
+    func testPlaintextPassIsLoggedOnce() throws {
+        let session = MiddlemanSession(counter: StatsCounter())
+        let clientSide = RawDHSide.create()
+        let serverSide = RawDHSide.create()
+        _ = try session.process(
+            makeTGCPFrame(command: TGCP.commandClientHello, dhPublic: clientSide.publicBytes),
+            direction: .clientToServer
+        )
+        _ = try session.process(
+            makeTGCPFrame(command: TGCP.commandServerHello, dhPublic: serverSide.publicBytes),
+            direction: .serverToClient
+        )
+
+        var events: [MiddlemanSession.FrameEvent] = []
+        session.onFrame = { events.append($0) }
+        let ping = makeTGCPFrame(command: 0x2002, gate: 0, sequence: 9, body: [UInt8](repeating: 0, count: 8))
+        _ = try session.process(ping, direction: .serverToClient)
+        _ = try session.process(ping, direction: .serverToClient)
+        XCTAssertEqual(events.map(\.action), ["pass-plaintext"])
+    }
+}
+
+/// 从帧头里取公钥，补成定长大端 —— 与中间人算摘要前的处理一致
+private func forwardedPublicDigestSource(_ frame: TGCPFrame) throws -> [UInt8] {
+    try XCTUnwrap(
+        TGCP.parseDHPublic(header: frame.header).value.bigEndianBytes(fixedSize: RawDH.publicBytes)
+    )
 }
 
 final class MaterialExtractorTests: XCTestCase {
@@ -397,6 +518,38 @@ final class MaterialExtractorTests: XCTestCase {
         XCTAssertEqual(candidates.count, 1)
         XCTAssertEqual(candidates.first?.material, material)
         XCTAssertEqual(candidates.first?.offset, 7)
+        // 明文比窗口还短，上下文就是整段明文
+        XCTAssertEqual(candidates.first?.context, plain)
+    }
+
+    /// 偏移必须是**字节**偏移。命中处前面夹了多字节字符时，
+    /// 按「字符数」算会算少（实战报文里二进制字节遍地都是，这个坑必踩）
+    func testOffsetCountsBytesNotCharacters() {
+        let material = (0..<128).map { UInt8($0) }
+        let blob = Array(Data(material).base64EncodedString().utf8)
+        let prefix = Array("战斗!".utf8)
+        XCTAssertEqual(prefix.count, 7, "三个字符共 7 字节")
+
+        let candidate = MaterialExtractor.candidates(in: prefix + blob).first { $0.layer == "plain" }
+        XCTAssertEqual(candidate?.offset, prefix.count)
+        XCTAssertEqual(candidate?.material, material)
+    }
+
+    /// 上下文取命中处前后各 2048 字节，并贴边裁剪
+    func testContextWindowIsClampedToLayerBounds() {
+        let material = (0..<128).map { UInt8($0) }
+        let blob = Data(material).base64EncodedString()
+        // 用非 base64 字符填充，免得被当成更长的候选
+        let padding = String(repeating: "|", count: 3000)
+        let plain = Array("\(padding)\(blob)\(padding)".utf8)
+
+        let candidate = MaterialExtractor.candidates(in: plain).first { $0.layer == "plain" }
+        XCTAssertEqual(candidate?.offset, 3000)
+        XCTAssertEqual(
+            candidate?.context.count,
+            MaterialExtractor.contextRadius * 2 + blob.utf8.count,
+            "两侧各 2048 加命中段本身"
+        )
     }
 
     func testIgnoresBlobsOfWrongLength() {
