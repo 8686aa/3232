@@ -8,6 +8,7 @@ struct ContentView: View {
         NavigationStack {
             Form {
                 listenSection
+                reportSection
                 statsSection
                 materialSection
                 logSection
@@ -58,6 +59,46 @@ struct ContentView: View {
             Text("配置")
         } footer: {
             Text("对外地址是告诉小火箭「UDP 往哪发」的地址。自动探测不准（比如走热点）时必须手工填本机在同一个网段里的 IP。")
+        }
+    }
+
+    // MARK: - 上报
+
+    private var reportSection: some View {
+        Section {
+            LabeledContent("订阅地址") {
+                TextField("ws://节点地址:1082", text: $model.reportAddressText)
+                    .keyboardType(.URL)
+                    .multilineTextAlignment(.trailing)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .disabled(model.isRunning)
+            }
+            LabeledContent("房间 Key") {
+                TextField("32 位十六进制", text: $model.roomKeyText)
+                    .font(.system(.body, design: .monospaced))
+                    .multilineTextAlignment(.trailing)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .disabled(model.isRunning)
+            }
+            LabeledContent("上报", value: model.reportConnectionSummary)
+            if model.reportConfigured {
+                LabeledContent("已发 / 补发", value: "\(model.reportStats.sent) / \(model.reportStats.resent)")
+                LabeledContent("排队 / 丢弃", value: "\(model.reportStats.queued) / \(model.reportStats.dropped)")
+                if let keyID = model.reportStats.keyID {
+                    LabeledContent("密钥版本", value: keyID)
+                }
+            }
+            if let failure = model.reportFailure {
+                Text(failure)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+        } header: {
+            Text("WebSocket 上报")
+        } footer: {
+            Text("订阅地址是转发器节点，只填 IP 就按默认端口 1082；房间 Key 同时是预共享密钥与房间号，必须与服务端一致。两项都留空就不上报；地址与 Key 只能在停止后修改。")
         }
     }
 
