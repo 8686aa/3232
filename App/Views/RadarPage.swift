@@ -83,6 +83,7 @@ extension RadarRouter {
         var req = URLRequest(url: url)
         req.timeoutInterval = 6
         req.cachePolicy = .reloadIgnoringLocalCacheData
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
         URLSession.shared.dataTask(with: req) { [weak self] data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             var link: String?
@@ -97,11 +98,16 @@ extension RadarRouter {
                     let code = obj["code"] as? String ?? ""
                     message = "校验通过（\(name) / \(code)），打开雷达页"
                 } else {
+                    // 服务端失败一律回 {"ok":false,"error":"…"}，文案比状态码更具体，优先用它
                     message = "校验失败：\(obj["error"] as? String ?? "未知错误")"
                 }
+            } else if status == 400 {
+                // 契约见 接口-按key获取分享链接.md §2：400 格式错 / 404 查无此人 / 403 被停用或过期
+                message = "校验失败：KEY 格式错误（需 32 位小写 hex）"
             } else if status == 404 {
-                // 服务端对无效 KEY 直接回 404 且响应体为空，不单独认出来就会误报成「无响应」
-                message = "校验失败：KEY 无效，或该账号还没有共享码"
+                message = "校验失败：KEY 不存在（可能已被换掉）"
+            } else if status == 403 {
+                message = "校验失败：账号已过期或已被停用"
             } else if status != 0, status != 200 {
                 message = "校验失败：雷达服务返回 HTTP \(status)"
             } else {

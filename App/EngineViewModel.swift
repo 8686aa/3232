@@ -282,12 +282,15 @@ final class EngineViewModel: ObservableObject {
                       let key = user["api_key"] as? String, !key.isEmpty {
                 apiKey = key
                 message = "已登录 \(user["username"] as? String ?? "账号")，KEY 已填入"
+            } else if let text = obj?["error"] as? String {
+                // 服务端失败也回 {"ok":false,"error":"…"}（401 用户名或密码错误），比状态码更具体
+                message = text
             } else if status == 401 {
                 message = "账号或密码不正确"
-            } else if let text = obj?["error"] as? String {
-                message = text
-            } else {
+            } else if status != 0, status != 200 {
                 message = "登录失败（HTTP \(status)）"
+            } else {
+                message = "登录失败：节点雷达服务无响应"
             }
 
             DispatchQueue.main.async {

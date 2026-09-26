@@ -33,16 +33,14 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>需要接受同一局域网内设备的 SOCKS5 连接，才能作为中间人转发流量。</string>
 	<!-- 节点地址（ws://…:1082）与雷达服务（http://…:666）都是明文，且 IP 由用户在界面自填，
-	     无法预先声明域名白名单，只能整体放开：
-	       · NSAllowsArbitraryLoads           → URLSession 的明文请求（雷达校验走的就是它）
-	       · NSAllowsArbitraryLoadsInWebContent → 内置 WebView 加载的 http 页面
-	     两个键同时为 true 时，iOS 10+ 会分别作用于「非网页内容」与「网页内容」两条通路，
-	     只写前者的话 WebView 仍会被挡。 -->
+	     无法预先声明域名白名单，只能整体放开：NSAllowsArbitraryLoads 同时覆盖
+	     URLSession 的明文请求（雷达校验、账号登录走的就是它）与内置 WebView 的 http 页面。
+	     注意：不要再加 NSAllowsArbitraryLoadsInWebContent / NSAllowsArbitraryLoadsForMedia /
+	     NSAllowsLocalNetworking —— iOS 10+ 只要出现这三个键里的任意一个，本键就会被整个忽略，
+	     结果是 WebView 能开网页、但 URLSession 被 ATS 静默拦死，雷达校验永远拿不到链接。 -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-		<key>NSAllowsArbitraryLoadsInWebContent</key>
 		<true/>
 	</dict>
 </dict>
