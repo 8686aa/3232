@@ -8,9 +8,9 @@ import UIKit
 // 场景：游戏设备通过热点接到本机，本机跑一个无认证的 SOCKS5（端口就是设置页的
 // 「监听端口」）。原先要在游戏设备上逐字段手填，这里按客户端类型一键生成。
 //
-// 三家的差别只在「怎么导入」：
-//   · Shadowrocket —— 吃 socks:// 分享链接，扫码或复制即可；
-//   · sing-box / NekoBox —— 吃 JSON（NekoBox 就是 sing-box 内核的安卓壳）。
+// 按「怎么导入」分两类，不是一家一套格式：
+//   · 分享链接（socks://…) —— Shadowrocket 与 NekoBox 都吃，可扫码或剪贴板导入；
+//   · JSON 配置 —— sing-box 官方 App 只认这个，它不吃分享链接。
 // ============================================================================
 
 /// 一处接入点：客户端要连的就是本机内网地址 + 监听端口
@@ -42,41 +42,44 @@ enum AccessClient: String, CaseIterable, Identifiable {
     /// 生成出来的配置文本
     func config(for endpoint: AccessEndpoint) -> String {
         switch self {
-        case .shadowrocket:
-            // Shadowrocket 的 SOCKS5 分享格式：socks://<base64(host:port)>#备注。
-            // 本机不校验账号密码，所以 userinfo 段直接省掉。
-            let payload = Data(endpoint.hostPort.utf8).base64EncodedString()
-            let name = endpoint.name
-                .addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? endpoint.name
-            return "socks://\(payload)#\(name)"
+        case .shadowrocket, .nekobox:
+            // 两家都认通用的 socks:// 分享链接（NekoBox 1.4.0 起支持扫码导入）
+            return Self.shareLink(endpoint)
         case .singbox:
-            // sing-box 官方 App：tun 入口 + SOCKS5 出口，全局都走本机
-            return Self.json(endpoint, tag: "goradar", stack: "system")
-        case .nekobox:
-            // NekoBox 同是 sing-box 内核，只是安卓上 gvisor 栈更省事
-            return Self.json(endpoint, tag: "goradar-nekobox", stack: "gvisor")
+            // sing-box 官方 App 不吃分享链接，只认完整 JSON：tun 入口 + SOCKS5 出口
+            return Self.json(endpoint)
         }
     }
 
-    /// 能不能出二维码：只有链接形态扫得动 —— JSON 上千字符二维码放不下，也没客户端认
-    var supportsQRCode: Bool { self == .shadowrocket }
+    /// 是不是分享链接形态，决定出不出二维码：
+    /// JSON 上千字符二维码塞不下也扫不动，而 sing-box 官方 App 本来也不扫码导入。
+    var isLink: Bool { self == .shadowrocket || self == .nekobox }
 
     /// 导入说明
     var hint: String {
         switch self {
         case .shadowrocket:
-            return "游戏设备上打开 Shadowrocket，扫二维码即可，或复制链接后打开 App 会自动识别。"
+            return "游戏设备上打开 Shadowrocket，扫二维码，或复制链接后打开 App 会自动识别。"
                 + "扫码不认时，按上面的「接入参数」手动添加一条 SOCKS5 节点。"
         case .singbox:
-            return "把上面的 JSON 存成 .json 文件，在 sing-box 里「配置 → 新建 → 从文件导入」。"
+            return "存成 .json 文件后在 sing-box 里「配置 → 新建 → 从文件导入」，也可以复制后从剪贴板导入。"
         case .nekobox:
-            return "把上面的 JSON 存成 .json 文件，在 NekoBox 里「配置 → 新建配置 → 从剪贴板/文件导入」。"
+            return "扫二维码，或复制链接后在 NekoBox 里「配置 → 新建配置 → 从剪贴板导入」（扫码需 1.4.0 及以上）。"
         }
     }
 
-    /// sing-box 内核的 JSON：tun 收全量流量，出口是本机 SOCKS5；内网地址走直连，
+    /// 通用 SOCKS5 分享链接：socks://<base64(host:port)>#备注。
+    /// 本机不校验账号密码，所以 userinfo 段直接省掉。
+    private static func shareLink(_ endpoint: AccessEndpoint) -> String {
+        let payload = Data(endpoint.hostPort.utf8).base64EncodedString()
+        let name = endpoint.name
+            .addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? endpoint.name
+        return "socks://\(payload)#\(name)"
+    }
+
+    /// sing-box 的 JSON：tun 收全量流量，出口是本机 SOCKS5；内网地址走直连，
     /// 免得连热点本身也被塞进隧道里。
-    private static func json(_ endpoint: AccessEndpoint, tag: String, stack: String) -> String {
+    private static func json(_ endpoint: AccessEndpoint) -> String {
         """
         {
           "log": { "level": "info" },
@@ -86,13 +89,13 @@ enum AccessClient: String, CaseIterable, Identifiable {
               "tag": "tun-in",
               "address": ["172.19.0.1/30"],
               "auto_route": true,
-              "stack": "\(stack)"
+              "stack": "system"
             }
           ],
           "outbounds": [
             {
               "type": "socks",
-              "tag": "\(tag)",
+              "tag": "goradar",
               "server": "\(endpoint.host)",
               "server_port": \(endpoint.port),
               "version": "5"
@@ -106,7 +109,7 @@ enum AccessClient: String, CaseIterable, Identifiable {
                 "outbound": "direct"
               }
             ],
-            "final": "\(tag)"
+            "final": "goradar"
           }
         }
         """
@@ -129,7 +132,7 @@ struct AccessConfigSheet: View {
                     if let endpoint {
                         configBox(endpoint)
                         actions(endpoint)
-                        if client.supportsQRCode { qrBox(endpoint) }
+                        if client.isLink { qrBox(endpoint) }
                         params(endpoint)
                         tip
                     } else {
