@@ -9,11 +9,12 @@ import WebKit
 // 地址栏内容持久化，重启后仍是上次填写的地址。
 // ============================================================================
 
-/// 地址栏默认值；用户可在界面上改成任意链接，改动后持久化到 UserDefaults
-let radarDefaultURL = "http://baidu.com"
-
 /// 雷达服务（HTTP）端口，固定不可改；与转发器上报端口(ws 1082)部署在同一台机器、同一个 IP
 let radarHTTPPort = 666
+
+/// 旧版本拿它当地址栏默认值。它已经写进老用户的 UserDefaults，
+/// 不认出来就会一直用一个和雷达无关的页面当首页。
+private let legacyRadarPlaceholder = "http://baidu.com"
 
 /// 一次「跳到内置雷达」请求。每次都用新的 id，保证同一请求重复触发也能被 onChange 收到。
 struct RadarOpenRequest: Equatable {
@@ -62,6 +63,12 @@ extension RadarRouter {
         return c.url
     }
 
+    /// 账号登录接口地址：POST /api/auth/login，body 为 {"username":…,"password":…}
+    func loginURL(host: String) -> URL? {
+        guard let base = radarBaseURL(host: host) else { return nil }
+        return base.appendingPathComponent("api/auth/login")
+    }
+
     /// 开始监听后调用：向 <节点IP>:666 校验房间Key，服务端回 {"ok":true,"url":"…"} 时打开该链接。
     func openShare(host: String, apiKey: String) {
         guard !apiKey.isEmpty else {
@@ -76,7 +83,8 @@ extension RadarRouter {
         var req = URLRequest(url: url)
         req.timeoutInterval = 6
         req.cachePolicy = .reloadIgnoringLocalCacheData
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, error in
+        URLSession.shared.dataTask(with: req) { [weak self] data, response, error in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             var link: String?
             var message: String
             if let error = error {
@@ -91,6 +99,11 @@ extension RadarRouter {
                 } else {
                     message = "校验失败：\(obj["error"] as? String ?? "未知错误")"
                 }
+            } else if status == 404 {
+                // 服务端对无效 KEY 直接回 404 且响应体为空，不单独认出来就会误报成「无响应」
+                message = "校验失败：KEY 无效，或该账号还没有共享码"
+            } else if status != 0, status != 200 {
+                message = "校验失败：雷达服务返回 HTTP \(status)"
             } else {
                 message = "校验失败：雷达服务无响应"
             }
@@ -167,11 +180,13 @@ private struct RadarWebView: UIViewRepresentable {
 
 /// 内置雷达页（Tab 5）：顶部原生地址栏 + 刷新，下方内嵌浏览器
 struct RadarTabPage: View {
+    @ObservedObject var model: EngineViewModel
+
     @State private var box = WebBox()
     /// 地址栏文本（持久化：重启后仍是上次填写的地址）
-    @AppStorage("radar_url") private var urlText: String = radarDefaultURL
-    /// 当前已加载的地址
-    @State private var url = URL(string: radarDefaultURL)!
+    @AppStorage("radar_url") private var urlText = ""
+    /// 当前已加载的地址；nil = 还没决定加载什么，界面显示占位提示而不是空白网页
+    @State private var url: URL?
     /// 「前往」的版本号：同一地址重复点也要真的重载，详见 RadarWebView.token
     @State private var loadToken = 0
 
@@ -180,17 +195,38 @@ struct RadarTabPage: View {
             VStack(spacing: 0) {
                 addressBar
                 Divider()
-                RadarWebView(url: url, token: loadToken, box: box)
+                browser
             }
             .navigationTitle("雷达")
             .navigationBarTitleDisplayMode(.inline)
             .onAppear {
                 // TabView 的子页可能在切到该 Tab 时才构建，此时收不到已发出的请求，这里补一次
-                if let req = RadarRouter.shared.request { open(req) }
+                if let req = RadarRouter.shared.request {
+                    open(req)
+                } else {
+                    restore()
+                }
             }
             .onReceive(RadarRouter.shared.$request.compactMap { $0 }) { req in
                 open(req)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var browser: some View {
+        if let url {
+            RadarWebView(url: url, token: loadToken, box: box)
+        } else {
+            VStack(spacing: 10) {
+                Image(systemName: "network.slash")
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+                Text("先在「设置」里添加并选中一个节点")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -219,10 +255,27 @@ struct RadarTabPage: View {
                 Image(systemName: "arrow.clockwise")
                     .font(.body)
             }
+            .disabled(url == nil)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+
+    /// 页面首次出现时决定加载什么：优先上次用过的地址，其次当前节点的雷达服务。
+    /// 两者都没有（还没配节点）就留空，由 browser 出提示。
+    private func restore() {
+        guard url == nil else { return }
+
+        let saved = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !saved.isEmpty, saved != legacyRadarPlaceholder,
+           let u = URL(string: saved), u.host != nil {
+            url = u
+            return
+        }
+        guard let base = RadarRouter.shared.radarBaseURL(host: model.currentNode) else { return }
+        urlText = base.absoluteString
+        url = base
     }
 
     /// 地址栏提交：未带协议头时自动补 http://

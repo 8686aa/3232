@@ -35,7 +35,7 @@ struct RootTabView: View {
                 .tabItem { Label("设置", systemImage: "gearshape") }
                 .tag(3)
 
-            RadarTabPage()
+            RadarTabPage(model: model)
                 .tabItem { Label("雷达", systemImage: "safari") }
                 .tag(4)
         }

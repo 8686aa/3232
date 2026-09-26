@@ -59,6 +59,21 @@ final class EngineViewModel: ObservableObject {
     @Published private(set) var selectedHost = ""
     @Published var errorMessage: String?
 
+    /// 雷达账号名。只记住账号，密码不进 UserDefaults，只在一次登录里用掉。
+    @Published var accountUser = "" {
+        didSet { defaults.set(accountUser, forKey: DefaultsKey.accountUser) }
+    }
+    /// 登录状态，界面按它决定提示文案与颜色
+    @Published private(set) var accountState: AccountState = .idle
+
+    enum AccountState: Equatable {
+        case idle
+        case busy
+        /// 成功（文案已含账号名）
+        case ok(String)
+        case fail(String)
+    }
+
     /// 星图与波形的数据源，交给 Canvas 自己按帧推进
     let radar = RadarModel()
     let wave = WaveModel()
@@ -69,6 +84,7 @@ final class EngineViewModel: ObservableObject {
         static let selectedHost = "report.selectedHost"
         static let roomKey = "report.roomKey"
         static let keyOverride = "report.keyOverride"
+        static let accountUser = "radar.accountUser"
     }
 
     private let engine = MiddlemanEngine()
@@ -92,6 +108,7 @@ final class EngineViewModel: ObservableObject {
         if !savedPort.isEmpty { portText = savedPort }
         roomKeyText = defaults.string(forKey: DefaultsKey.roomKey) ?? ""
         keyOverrideText = defaults.string(forKey: DefaultsKey.keyOverride) ?? ""
+        accountUser = defaults.string(forKey: DefaultsKey.accountUser) ?? ""
 
         let saved = defaults.string(forKey: DefaultsKey.nodes) ?? ""
         let list = saved.split(separator: ",")
@@ -207,6 +224,84 @@ final class EngineViewModel: ObservableObject {
     private func saveNodes() {
         defaults.set(nodes.joined(separator: ","), forKey: DefaultsKey.nodes)
         defaults.set(selectedHost, forKey: DefaultsKey.selectedHost)
+    }
+
+    // MARK: - 账号登录
+
+    /// 拿账号密码登录「当前选中节点」的雷达服务，成功就把返回的 KEY 填进「房间 KEY」。
+    ///
+    /// 节点 IP 与雷达服务是同一台机器（http 666），所以登录打的是 http://<节点>:666/api/auth/login。
+    /// 密码只做这一次网络往返，不落盘；改完 KEY 要重新开始监听才会下发给上报端。
+    func loginAccount(password: String) {
+        let host = currentNode
+        guard !host.isEmpty else {
+            accountState = .fail("请先添加并选中一个节点")
+            return
+        }
+        let user = accountUser.trimmingCharacters(in: .whitespaces)
+        guard !user.isEmpty else {
+            accountState = .fail("请填写账号")
+            return
+        }
+        guard !password.isEmpty else {
+            accountState = .fail("请填写密码")
+            return
+        }
+        guard let url = RadarRouter.shared.loginURL(host: host) else {
+            accountState = .fail("无法从节点 \(host) 推导雷达服务地址")
+            return
+        }
+
+        accountState = .busy
+        append("[账号] 正在登录 \(host)…")
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 10
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "username": user,
+            "password": password,
+        ])
+
+        URLSession.shared.dataTask(with: req) { [weak self] data, response, error in
+            // 判定放在 URLSession 队列上做完，进主线程只赋值
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let obj = data.flatMap {
+                (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any]
+            }
+            var apiKey: String?
+            var message: String
+
+            if let error = error {
+                message = "登录失败：\(error.localizedDescription)"
+            } else if (obj?["ok"] as? Bool) == true,
+                      let user = obj?["user"] as? [String: Any],
+                      let key = user["api_key"] as? String, !key.isEmpty {
+                apiKey = key
+                message = "已登录 \(user["username"] as? String ?? "账号")，KEY 已填入"
+            } else if status == 401 {
+                message = "账号或密码不正确"
+            } else if let text = obj?["error"] as? String {
+                message = text
+            } else {
+                message = "登录失败（HTTP \(status)）"
+            }
+
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let apiKey {
+                    self.roomKeyText = apiKey
+                    self.accountState = .ok(message)
+                    self.append("[账号] \(message)", .ok)
+                } else {
+                    self.accountState = .fail(message)
+                    self.append("[账号] \(message)", .err)
+                }
+            }
+        }.resume()
     }
 
     // MARK: - 启停

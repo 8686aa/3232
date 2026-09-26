@@ -1,16 +1,19 @@
 import SwiftUI
 
-/// 设置页：订阅节点、房间 KEY、监听端口。
+/// 设置页：订阅节点、雷达账号、房间 KEY、监听端口。
 struct SettingsPage: View {
     @ObservedObject var model: EngineViewModel
 
     @State private var showAddNode = false
     @State private var draftNode = ""
+    /// 密码只在本次运行里存在，不进 UserDefaults
+    @State private var accountPass = ""
 
     var body: some View {
         NavigationStack {
             Form {
                 nodeSection
+                accountSection
                 keySection
                 portSection
                 aboutSection
@@ -64,6 +67,59 @@ struct SettingsPage: View {
             Text("订阅节点")
         } footer: {
             Text("点一行即选中为上报节点，左滑删除；至少保留一个节点。")
+        }
+    }
+
+    // MARK: - 雷达账号
+
+    private var accountSection: some View {
+        Section {
+            TextField("账号", text: $model.accountUser)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            SecureField("密码", text: $accountPass)
+
+            Button {
+                model.loginAccount(password: accountPass)
+            } label: {
+                Label("登录并获取 KEY", systemImage: "person.badge.key")
+            }
+            .disabled(model.accountState == .busy
+                      || model.accountUser.trimmingCharacters(in: .whitespaces).isEmpty
+                      || accountPass.isEmpty)
+
+            accountStatus
+        } header: {
+            Text("雷达账号")
+        } footer: {
+            Text(model.currentNode.isEmpty
+                 ? "先在上面添加并选中一个节点，登录会打到该节点的雷达服务。"
+                 : "向节点 \(model.currentNode) 的雷达服务登录，成功即把该账号的 KEY 填到下面的「房间 KEY」。"
+                   + "密码不会保存；KEY 改完要重新开始监听才生效。")
+        }
+    }
+
+    @ViewBuilder
+    private var accountStatus: some View {
+        switch model.accountState {
+        case .idle:
+            EmptyView()
+        case .busy:
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("登录中…")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        case .ok(let text):
+            Label(text, systemImage: "checkmark.circle.fill")
+                .font(.footnote)
+                .foregroundStyle(Color.green)
+        case .fail(let text):
+            Label(text, systemImage: "exclamationmark.triangle.fill")
+                .font(.footnote)
+                .foregroundStyle(Color.red)
         }
     }
 
