@@ -8,6 +8,7 @@ struct SettingsPage: View {
     @State private var draftNode = ""
     /// 密码只在本次运行里存在，不进 UserDefaults
     @State private var accountPass = ""
+    @State private var showAccess = false
 
     var body: some View {
         NavigationStack {
@@ -16,9 +17,13 @@ struct SettingsPage: View {
                 accountSection
                 keySection
                 portSection
+                accessSection
                 aboutSection
             }
             .navigationTitle("设置")
+            .sheet(isPresented: $showAccess) {
+                AccessConfigSheet(model: model)
+            }
             .alert("添加订阅节点", isPresented: $showAddNode) {
                 TextField("节点 IP", text: $draftNode)
                     .keyboardType(.numbersAndPunctuation)
@@ -150,6 +155,23 @@ struct SettingsPage: View {
             Text("监听端口")
         } footer: {
             Text(model.isRunning ? "监听中不能修改端口。" : "热点设备把 http/socks 代理指到本机这个端口。")
+        }
+    }
+
+    // MARK: - 接入配置
+
+    private var accessSection: some View {
+        Section {
+            Button {
+                showAccess = true
+            } label: {
+                Label("一键生成接入配置", systemImage: "square.and.arrow.up.on.square")
+            }
+        } header: {
+            Text("接入配置")
+        } footer: {
+            Text("生成 Shadowrocket / sing-box / NekoBox 三类配置，代理都指向本机 "
+                 + "\(model.localIp):\(model.portText)。游戏设备导入后就不用再手填字段。")
         }
     }
 
