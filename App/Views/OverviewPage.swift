@@ -15,6 +15,7 @@ struct OverviewPage: View {
                 reportSection
                 controlSection
             }
+            .readableFrame()
             .navigationTitle("GORaDar")
             .alert("提示", isPresented: $showErr) {
                 Button("好", role: .cancel) {}

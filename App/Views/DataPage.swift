@@ -32,6 +32,7 @@ struct DataPage: View {
                     logSection
                 }
             }
+            .readableFrame()
             .navigationTitle("数据")
         }
     }

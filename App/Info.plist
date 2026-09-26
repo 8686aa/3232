@@ -28,6 +28,15 @@
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
+	<!-- iPad 四个方向都放开：宽屏与横竖屏切换是 iPad 的常态用法，
+	     只给竖屏的话横屏时会被系统强制转回竖屏，观感很怪。 -->
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
 	<!-- 局域网设备（另一台 iPhone 上的小火箭）要连进来，必须声明用途，
 	     否则 iOS 14+ 会直接掐断监听/连接且不报错 -->
 	<key>NSLocalNetworkUsageDescription</key>

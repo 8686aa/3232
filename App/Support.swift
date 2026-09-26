@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 // MARK: - 全局配色
 
@@ -57,4 +58,23 @@ func shortIp(_ ip: String) -> String {
     let parts = ip.split(separator: ".")
     guard parts.count >= 2 else { return ip }
     return "\(parts[parts.count - 2]).\(parts[parts.count - 1])"
+}
+
+// MARK: - 宽屏适配（iPad / 横屏）
+
+extension View {
+    /// 把正文限宽居中。
+    ///
+    /// iPad 上 List / Form 默认铺满整屏：1024–1366pt 宽时，一行说明文字会拉到上千点，
+    /// 「标签 —— 值」的两端也被扯得老远，读起来很散。这里限到 700pt 居中
+    /// （接近系统的 readable content 宽度）。
+    ///
+    /// iPhone 竖屏可用宽度本来就小于 700，等于什么都没做。列表容器自己的底色先关掉、
+    /// 再由本修饰符按整屏画一张同色的底：否则限宽后两侧会露出窗口底色，看着像被切过。
+    func readableFrame(limit: CGFloat = 700) -> some View {
+        scrollContentBackground(.hidden)
+            .frame(maxWidth: limit)
+            .frame(maxWidth: .infinity)
+            .background(Color(uiColor: .systemGroupedBackground))
+    }
 }

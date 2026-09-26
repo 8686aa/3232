@@ -4,12 +4,19 @@ import SwiftUI
 struct LinkPage: View {
     @ObservedObject var model: EngineViewModel
 
+    /// 宽屏（iPad）下把两张画布一起放大：雷达和波形都是按时的高宽比取半径，
+    /// 只加宽不加高的话圆会缩在中间、上下留出一大块空白。
+    @Environment(\.horizontalSizeClass) private var hSize
+
+    private var radarHeight: CGFloat { hSize == .regular ? 520 : 320 }
+    private var waveHeight: CGFloat { hSize == .regular ? 240 : 150 }
+
     var body: some View {
         NavigationStack {
             List {
                 Section {
                     RadarView(model: model.radar)
-                        .frame(height: 320)
+                        .frame(height: radarHeight)
                         .listRowInsets(EdgeInsets())
                 } header: {
                     Text("链路拓扑")
@@ -19,7 +26,7 @@ struct LinkPage: View {
 
                 Section("流量波形") {
                     WaveView(model: model.wave)
-                        .frame(height: 150)
+                        .frame(height: waveHeight)
                         .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
                 }
 
@@ -31,6 +38,7 @@ struct LinkPage: View {
                     LabeledContent("已上报报文", value: fmt(Int64(model.stats.udpUploaded)))
                 }
             }
+            .readableFrame()
             .navigationTitle("链路")
         }
     }

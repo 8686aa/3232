@@ -20,6 +20,7 @@ struct SettingsPage: View {
                 accessSection
                 aboutSection
             }
+            .readableFrame()
             .navigationTitle("设置")
             .sheet(isPresented: $showAccess) {
                 AccessConfigSheet(model: model)
