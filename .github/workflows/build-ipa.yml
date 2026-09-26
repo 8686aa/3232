@@ -33,8 +33,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild \
-            -project StarRadar.xcodeproj \
-            -scheme StarRadar \
+            -project GORaDar.xcodeproj \
+            -scheme GORaDar \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
@@ -48,16 +48,16 @@ jobs:
         if: success()
         run: |
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/StarRadar.app Payload/
-          zip -qry StarRadar-unsigned.ipa Payload
-          ls -lh StarRadar-unsigned.ipa
+          cp -R build/Build/Products/Release-iphoneos/GORaDar.app Payload/
+          zip -qry GORaDar-unsigned.ipa Payload
+          ls -lh GORaDar-unsigned.ipa
 
       - name: 上传 IPA
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: StarRadar-unsigned-ipa
-          path: StarRadar-unsigned.ipa
+          name: GORaDar-unsigned-ipa
+          path: GORaDar-unsigned.ipa
           if-no-files-found: error
 
       # 编译失败时唯一的取证手段：日志作为产物，下载后贴回来定位错误

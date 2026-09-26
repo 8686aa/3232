@@ -165,7 +165,7 @@ private struct RadarWebView: UIViewRepresentable {
     }
 }
 
-/// 内置雷达页（Tab 1）：顶部地址栏 + 刷新，下方内嵌浏览器
+/// 内置雷达页（Tab 5）：顶部原生地址栏 + 刷新，下方内嵌浏览器
 struct RadarTabPage: View {
     @State private var box = WebBox()
     /// 地址栏文本（持久化：重启后仍是上次填写的地址）
@@ -176,66 +176,53 @@ struct RadarTabPage: View {
     @State private var loadToken = 0
 
     var body: some View {
-        VStack(spacing: 0) {
-            addressBar
-            RadarWebView(url: url, token: loadToken, box: box)
-        }
-        .background(P.color(P.BG0))
-        .onAppear {
-            // TabView 的子页可能在切到该 Tab 时才构建，此时收不到已发出的请求，这里补一次
-            if let req = RadarRouter.shared.request { open(req) }
-        }
-        .onReceive(RadarRouter.shared.$request.compactMap { $0 }) { req in
-            open(req)
+        NavigationStack {
+            VStack(spacing: 0) {
+                addressBar
+                Divider()
+                RadarWebView(url: url, token: loadToken, box: box)
+            }
+            .navigationTitle("雷达")
+            .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                // TabView 的子页可能在切到该 Tab 时才构建，此时收不到已发出的请求，这里补一次
+                if let req = RadarRouter.shared.request { open(req) }
+            }
+            .onReceive(RadarRouter.shared.$request.compactMap { $0 }) { req in
+                open(req)
+            }
         }
     }
 
     private var addressBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "dot.radiowaves.left.and.right")
-                .font(.system(size: 13))
-                .foregroundColor(P.color(P.CYAN))
+        HStack(spacing: 10) {
+            Image(systemName: "network")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
 
-            TextField(radarDefaultURL, text: $urlText)
-                .font(Fonts.mono(12))
-                .foregroundColor(P.color(P.TXT))
-                .tint(P.color(P.CYAN))
+            TextField("输入服务器地址", text: $urlText)
+                .textFieldStyle(.roundedBorder)
+                .font(.footnote)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled(true)
                 .keyboardType(.URL)
                 .submitLabel(.go)
                 .onSubmit { go() }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(P.color(0xB80C1323))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(P.color(0x331860DC), lineWidth: 1)
-                )
 
             Button(action: go) {
                 Image(systemName: "arrow.right.circle.fill")
-                    .font(.system(size: 19))
-                    .foregroundColor(P.color(P.CYAN))
+                    .font(.title3)
             }
+            .disabled(urlText.trimmingCharacters(in: .whitespaces).isEmpty)
+
             Button { box.web?.reload() } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 14))
-                    .foregroundColor(P.color(P.TXT_DIM))
+                    .font(.body)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(
-            ZStack(alignment: .bottom) {
-                LinearGradient(colors: [P.color(0xE60C1323), P.color(0xA0070C18)],
-                               startPoint: .top, endPoint: .bottom)
-                Rectangle().fill(P.color(0x291860DC)).frame(height: 1)
-            }
-        )
+        .background(.bar)
     }
 
     /// 地址栏提交：未带协议头时自动补 http://

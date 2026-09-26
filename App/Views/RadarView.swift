@@ -155,7 +155,13 @@ struct RadarView: View {
 
 // MARK: - 绘制
 
+/// 全部用系统语义色，浅色/深色底都能看清；只画同心圆、刻度、连线、光点，不做装饰性元素。
 private enum RadarPainter {
+
+    private static var grid: Color { Color.gray.opacity(0.30) }
+    private static var gridSoft: Color { Color.gray.opacity(0.22) }
+    private static var tickColor: Color { Color.gray.opacity(0.50) }
+    private static var labelColor: Color { Color.secondary }
 
     static func paint(_ ctx: inout GraphicsContext, size: CGSize, model: RadarModel) {
         let w = size.width
@@ -164,23 +170,10 @@ private enum RadarPainter {
 
         let cx = w / 2
         let cy = h / 2
-        let radius = min(w, h) * 0.46
+        let radius = min(w, h) * 0.42
         let t = model.time
 
-        ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(P.color(P.BG0)))
-
-        // 背景径向辉光
-        let bgR = radius * 1.5
-        ctx.fill(Path(ellipseIn: CGRect(x: cx - bgR, y: cy - bgR, width: bgR * 2, height: bgR * 2)),
-                 with: .radialGradient(Gradient(stops: [
-                    .init(color: P.color(P.alpha(P.CYAN, 0x12)), location: 0),
-                    .init(color: P.color(P.alpha(P.VIOLET, 0x0A)), location: 0.5),
-                    .init(color: P.color(P.alpha(P.BG0, 0x00)), location: 1)
-                 ]),
-                 center: CGPoint(x: cx, y: cy), startRadius: 0, endRadius: bgR))
-
-        drawStars(&ctx, w: w, h: h)
-        drawGrid(&ctx, cx: cx, cy: cy, radius: radius, time: t)
+        drawGrid(&ctx, cx: cx, cy: cy, radius: radius)
         drawSweep(&ctx, cx: cx, cy: cy, radius: radius, model: model)
         drawLinks(&ctx, cx: cx, cy: cy, radius: radius, model: model)
         drawParticles(&ctx, cx: cx, cy: cy, radius: radius, model: model)
@@ -188,55 +181,30 @@ private enum RadarPainter {
         drawNodes(&ctx, cx: cx, cy: cy, radius: radius, model: model, time: t)
     }
 
-    // MARK: 微星点
+    // MARK: 网格：4 圈同心圆 + 十字线 + 外圈刻度
 
-    private static func drawStars(_ ctx: inout GraphicsContext, w: CGFloat, h: CGFloat) {
-        var seed: UInt64 = 20260915
-        func rnd() -> CGFloat {
-            seed = seed &* 6364136223846793005 &+ 1442695040888963407
-            return CGFloat((seed >> 33) % 100000) / 100000.0
-        }
-        let count = max(20, min(220, Int(w * h / 5200)))
-        for _ in 0..<count {
-            let x = rnd() * w
-            let y = rnd() * h
-            let a = Int(0x10 + rnd() * 0x30)
-            ctx.fill(Path(ellipseIn: CGRect(x: x, y: y, width: 1.2, height: 1.2)),
-                     with: .color(P.color(P.alpha(P.TXT, a))))
-        }
-    }
-
-    // MARK: 网格
-
-    private static func drawGrid(_ ctx: inout GraphicsContext, cx: CGFloat, cy: CGFloat,
-                                 radius: CGFloat, time: CGFloat) {
+    private static func drawGrid(_ ctx: inout GraphicsContext, cx: CGFloat, cy: CGFloat, radius: CGFloat) {
         for i in 1...4 {
             let r = radius * CGFloat(i) / 4
-            let outer = (i == 4)
             ctx.stroke(Path(ellipseIn: CGRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2)),
-                       with: .color(P.color(outer ? P.alpha(P.CYAN, 0x33) : P.alpha(P.GRID, 0x1A))),
-                       lineWidth: outer ? 1.3 : 1)
-
-            for k in 0..<48 {
-                let a = CGFloat(k) / 48 * RadarModel.TAU
-                let long = (k % 6 == 0)
-                let len: CGFloat = long ? 6 : 3
-                var tick = Path()
-                tick.move(to: CGPoint(x: cx + cos(a) * r, y: cy + sin(a) * r))
-                tick.addLine(to: CGPoint(x: cx + cos(a) * (r - len), y: cy + sin(a) * (r - len)))
-                ctx.stroke(tick,
-                           with: .color(P.color(long ? P.alpha(P.CYAN, 0x47) : P.alpha(P.GRID, 0x21))),
-                           lineWidth: 1)
-            }
+                       with: .color(i == 4 ? Color.blue.opacity(0.35) : grid),
+                       lineWidth: 1)
         }
 
-        // 十字对角线
         for k in 0..<4 {
             let a = CGFloat(k) / 4 * RadarModel.TAU + CGFloat.pi / 4
-            var p = Path()
-            p.move(to: CGPoint(x: cx + cos(a) * radius, y: cy + sin(a) * radius))
-            p.addLine(to: CGPoint(x: cx - cos(a) * radius, y: cy - sin(a) * radius))
-            ctx.stroke(p, with: .color(P.color(P.alpha(P.GRID, 0x17))), lineWidth: 1)
+            var line = Path()
+            line.move(to: CGPoint(x: cx + cos(a) * radius, y: cy + sin(a) * radius))
+            line.addLine(to: CGPoint(x: cx - cos(a) * radius, y: cy - sin(a) * radius))
+            ctx.stroke(line, with: .color(gridSoft), lineWidth: 1)
+        }
+
+        for k in 0..<12 {
+            let a = CGFloat(k) / 12 * RadarModel.TAU
+            var tick = Path()
+            tick.move(to: CGPoint(x: cx + cos(a) * radius, y: cy + sin(a) * radius))
+            tick.addLine(to: CGPoint(x: cx + cos(a) * (radius - 6), y: cy + sin(a) * (radius - 6)))
+            ctx.stroke(tick, with: .color(tickColor), lineWidth: 1)
         }
     }
 
@@ -244,8 +212,8 @@ private enum RadarPainter {
 
     private static func drawSweep(_ ctx: inout GraphicsContext, cx: CGFloat, cy: CGFloat,
                                   radius: CGFloat, model: RadarModel) {
-        let tail = CGFloat.pi * 0.62
-        let steps = 30
+        let tail = CGFloat.pi * 0.55
+        let steps = 20
         let ang = model.sweep
         for i in 0..<steps {
             let f0 = CGFloat(i) / CGFloat(steps)
@@ -257,14 +225,13 @@ private enum RadarPainter {
             wedge.addLine(to: CGPoint(x: cx + cos(a1) * radius, y: cy + sin(a1) * radius))
             wedge.addLine(to: CGPoint(x: cx + cos(a0) * radius, y: cy + sin(a0) * radius))
             wedge.closeSubpath()
-            let alpha = Int(0.075 * (1 - Double(f0)) * 255)
-            ctx.fill(wedge, with: .color(P.color(P.alpha(P.CYAN, alpha))))
+            ctx.fill(wedge, with: .color(Color.blue.opacity(Double(0.10 * (1 - f0)))))
         }
 
         var line = Path()
         line.move(to: CGPoint(x: cx, y: cy))
         line.addLine(to: CGPoint(x: cx + cos(ang) * radius, y: cy + sin(ang) * radius))
-        ctx.stroke(line, with: .color(P.color(P.alpha(0xFFA0F5FF, 0x8C))), lineWidth: 1.6)
+        ctx.stroke(line, with: .color(Color.blue.opacity(0.55)), lineWidth: 1.5)
     }
 
     // MARK: 连线
@@ -280,8 +247,7 @@ private enum RadarPainter {
                 var p = Path()
                 p.move(to: a)
                 p.addLine(to: b)
-                let col = remotes[i].target ? P.AMBER : P.VIOLET
-                ctx.stroke(p, with: .color(P.color(P.alpha(col, 0x1A))), lineWidth: 1)
+                ctx.stroke(p, with: .color(gridSoft), lineWidth: 1)
             }
         }
 
@@ -291,8 +257,8 @@ private enum RadarPainter {
             p.move(to: CGPoint(x: cx, y: cy))
             p.addLine(to: nodePoint(cx, cy, radius, d.angle, 1.0))
             ctx.stroke(p,
-                       with: .color(P.color(P.alpha(P.TEAL, 0x3D))),
-                       style: StrokeStyle(lineWidth: 1.2, dash: [4, 5]))
+                       with: .color(Color.blue.opacity(0.28)),
+                       style: StrokeStyle(lineWidth: 1, dash: [4, 5]))
         }
     }
 
@@ -321,17 +287,16 @@ private enum RadarPainter {
             }
 
             let fade = sin(CGFloat.pi * max(0, min(1, p.t)))
-            let col = p.up ? P.TEAL : P.DOWN
+            let color = p.up ? Palette.up : Palette.down
             let pos = bez(p.t)
-            let tail = bez(max(0, p.t - 0.09))
+            let tailPos = bez(max(0, p.t - 0.09))
 
-            var tp = Path()
-            tp.move(to: tail)
-            tp.addLine(to: pos)
-            ctx.stroke(tp, with: .color(P.color(P.alpha(col, Int(0x8C * fade)))), lineWidth: 1.6)
+            var trail = Path()
+            trail.move(to: tailPos)
+            trail.addLine(to: pos)
+            ctx.stroke(trail, with: .color(color.opacity(Double(0.55 * fade))), lineWidth: 1.6)
 
-            let sprite = 9 * (0.7 + fade * 0.6)
-            glow(&ctx, at: pos, size: sprite, color: col, strength: fade)
+            glow(&ctx, at: pos, size: 9 * (0.7 + fade * 0.6), color: color, strength: fade)
         }
 
         // 落点涟漪
@@ -339,10 +304,10 @@ private enum RadarPainter {
             guard rp.ri < model.remotes.count else { continue }
             let rem = model.remotes[rp.ri]
             let pt = nodePoint(cx, cy, radius, rem.angle, rem.r0)
-            let rr = 6 + rp.t * 16
+            let rr = 6 + rp.t * 14
             ctx.stroke(Path(ellipseIn: CGRect(x: pt.x - rr, y: pt.y - rr, width: rr * 2, height: rr * 2)),
-                       with: .color(P.color(P.alpha(P.AMBER, Int(0.55 * (1 - rp.t) * 255)))),
-                       lineWidth: 1.2)
+                       with: .color(Palette.down.opacity(Double(0.5 * (1 - rp.t)))),
+                       lineWidth: 1)
         }
     }
 
@@ -350,25 +315,27 @@ private enum RadarPainter {
 
     private static func drawCore(_ ctx: inout GraphicsContext, cx: CGFloat, cy: CGFloat,
                                  live: Bool, time: CGFloat) {
-        let halo = 124 * (1 + 0.05 * sin(time * 1.8))
-        glow(&ctx, at: CGPoint(x: cx, y: cy), size: halo, color: P.TEAL, strength: 1)
+        let color = live ? Color.blue : Color.gray
+        glow(&ctx, at: CGPoint(x: cx, y: cy), size: 60, color: color, strength: live ? 0.9 : 0.5)
 
-        for i in 0..<3 {
-            let prog = (time * 0.42 + CGFloat(i) / 3).truncatingRemainder(dividingBy: 1)
-            let rr = 14 + prog * 46
-            ctx.stroke(Path(ellipseIn: CGRect(x: cx - rr, y: cy - rr, width: rr * 2, height: rr * 2)),
-                       with: .color(P.color(P.alpha(P.TEAL, Int(0.34 * (1 - prog) * 255)))),
-                       lineWidth: 1.4)
+        // 监听中才有向外扩散的脉冲
+        if live {
+            for i in 0..<3 {
+                let prog = (time * 0.42 + CGFloat(i) / 3).truncatingRemainder(dividingBy: 1)
+                let rr = 12 + prog * 40
+                ctx.stroke(Path(ellipseIn: CGRect(x: cx - rr, y: cy - rr, width: rr * 2, height: rr * 2)),
+                           with: .color(color.opacity(Double(0.30 * (1 - prog)))),
+                           lineWidth: 1.2)
+            }
         }
 
-        glow(&ctx, at: CGPoint(x: cx, y: cy), size: 44, color: P.TEAL, strength: 1)
-        ctx.fill(Path(ellipseIn: CGRect(x: cx - 3.7, y: cy - 3.7, width: 7.4, height: 7.4)),
-                 with: .color(P.color(0xFFEAFFFB)))
+        ctx.fill(Path(ellipseIn: CGRect(x: cx - 5, y: cy - 5, width: 10, height: 10)),
+                 with: .color(color))
 
         ctx.draw(Text(live ? "本机服务 · 监听中" : "本机服务 · 待机")
-                    .font(Fonts.sans(9.5))
-                    .foregroundColor(P.color(P.alpha(P.TEAL, 0xCC))),
-                 at: CGPoint(x: cx, y: cy + 46), anchor: .center)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(labelColor),
+                 at: CGPoint(x: cx, y: cy + 36), anchor: .center)
     }
 
     // MARK: 节点
@@ -378,60 +345,42 @@ private enum RadarPainter {
         // 远端
         for rem in model.remotes {
             let pt = nodePoint(cx, cy, radius, rem.angle, rem.r0)
+            let color = rem.target ? Palette.down : Color.purple
 
             if rem.glow > 0.01 {
-                glow(&ctx, at: pt, size: 30 + rem.glow * 22, color: rem.target ? P.AMBER : P.VIOLET,
-                     strength: rem.glow)
+                glow(&ctx, at: pt, size: 26 + rem.glow * 18, color: color, strength: rem.glow)
             }
 
-            if rem.target {
-                let rr: CGFloat = 11
-                let rot = time * 34 * CGFloat.pi / 180
-                let span = CGFloat(252) * CGFloat.pi / 180
-                var arc = Path()
-                arc.addArc(center: pt, radius: rr,
-                           startAngle: .radians(Double(rot)),
-                           endAngle: .radians(Double(rot + span)),
-                           clockwise: false)
-                ctx.stroke(arc, with: .color(P.color(P.alpha(P.AMBER, 0xB3))), lineWidth: 1.3)
-            }
-
-            let core: CGFloat = rem.target ? 5 : 3.6
+            let core: CGFloat = rem.target ? 4.5 : 3.5
             ctx.fill(Path(ellipseIn: CGRect(x: pt.x - core, y: pt.y - core, width: core * 2, height: core * 2)),
-                     with: .color(P.color(rem.target ? P.AMBER : 0xFFB9A8FF)))
+                     with: .color(color))
 
             ctx.draw(Text(shortIp(rem.ip))
-                        .font(Fonts.mono(9))
-                        .foregroundColor(P.color(P.alpha(P.TXT_DIM, 0xE6))),
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(labelColor),
                      at: CGPoint(x: pt.x, y: pt.y - 12), anchor: .center)
-            if rem.target {
-                ctx.draw(Text("TARGET")
-                            .font(Fonts.sans(8))
-                            .foregroundColor(P.color(P.alpha(P.AMBER, 0x8C))),
-                         at: CGPoint(x: pt.x, y: pt.y - 24), anchor: .center)
-            }
         }
 
         // 客户端（热点设备）
         for (i, dev) in model.devices.enumerated() {
             let pt = nodePoint(cx, cy, radius, dev.angle, 1.0)
 
-            let breath = 52 * (1 + 0.12 * sin(time * 2.2 + CGFloat(i)))
-            glow(&ctx, at: pt, size: breath, color: P.CYAN, strength: 1)
+            let breath = 30 * (1 + 0.12 * sin(time * 2.2 + CGFloat(i)))
+            glow(&ctx, at: pt, size: breath, color: Color.blue, strength: 0.75)
 
             ctx.stroke(Path(ellipseIn: CGRect(x: pt.x - 6, y: pt.y - 6, width: 12, height: 12)),
-                       with: .color(P.color(P.alpha(P.TEAL, 0x73))), lineWidth: 1.4)
-            ctx.fill(Path(ellipseIn: CGRect(x: pt.x - 2.7, y: pt.y - 2.7, width: 5.4, height: 5.4)),
-                     with: .color(P.color(P.TEAL)))
+                       with: .color(Color.blue.opacity(0.6)), lineWidth: 1.4)
+            ctx.fill(Path(ellipseIn: CGRect(x: pt.x - 2.6, y: pt.y - 2.6, width: 5.2, height: 5.2)),
+                     with: .color(Color.blue))
 
             ctx.draw(Text(dev.ip)
-                        .font(Fonts.mono(10))
-                        .foregroundColor(P.color(P.alpha(P.TXT, 0xEB))),
-                     at: CGPoint(x: pt.x, y: pt.y + 20), anchor: .center)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(Color.primary),
+                     at: CGPoint(x: pt.x, y: pt.y + 19), anchor: .center)
             ctx.draw(Text("客户端")
-                        .font(Fonts.sans(9))
-                        .foregroundColor(P.color(P.alpha(P.TEAL, 0x8C))),
-                     at: CGPoint(x: pt.x, y: pt.y + 33), anchor: .center)
+                        .font(.system(size: 9))
+                        .foregroundColor(labelColor),
+                     at: CGPoint(x: pt.x, y: pt.y + 32), anchor: .center)
         }
     }
 
@@ -444,17 +393,15 @@ private enum RadarPainter {
                 y: cy + sin(angle) * radius * factor * 0.94)
     }
 
-    /// 径向辉光贴图
+    /// 柔和径向光斑
     private static func glow(_ ctx: inout GraphicsContext, at pt: CGPoint,
-                             size: CGFloat, color: UInt32, strength: CGFloat) {
+                             size: CGFloat, color: Color, strength: CGFloat) {
         let r = max(size, 1) / 2
-        let s = max(0, min(1, strength))
-        let rect = CGRect(x: pt.x - r, y: pt.y - r, width: r * 2, height: r * 2)
-        ctx.fill(Path(ellipseIn: rect),
+        let s = Double(max(0, min(1, strength)))
+        ctx.fill(Path(ellipseIn: CGRect(x: pt.x - r, y: pt.y - r, width: r * 2, height: r * 2)),
                  with: .radialGradient(Gradient(stops: [
-                    .init(color: P.color(P.alpha(color, Int(0xCC * s))), location: 0),
-                    .init(color: P.color(P.alpha(color, Int(0x4D * s))), location: 0.38),
-                    .init(color: P.color(P.alpha(color, 0)), location: 1)
+                    .init(color: color.opacity(0.35 * s), location: 0),
+                    .init(color: color.opacity(0), location: 1)
                  ]),
                  center: pt, startRadius: 0, endRadius: r))
     }

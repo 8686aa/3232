@@ -1,10 +1,10 @@
-# XcodeGen 描述文件：CI 靠它生成 StarRadar.xcodeproj（本机是 Windows，没有 Xcode，
+# XcodeGen 描述文件：CI 靠它生成 GORaDar.xcodeproj（本机是 Windows，没有 Xcode，
 # 所以工程文件不入库，一律现场生成，避免 pbxproj 手改不同步）。
 # 本地 macOS 上等价于：brew install xcodegen && xcodegen generate
-name: StarRadar
+name: GORaDar
 
 options:
-  bundleIdPrefix: com.starradar
+  bundleIdPrefix: com.goradar
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
@@ -18,7 +18,7 @@ packages:
     path: Core
 
 targets:
-  StarRadar:
+  GORaDar:
     type: application
     platform: iOS
     sources:
@@ -31,7 +31,7 @@ targets:
       - package: StarRadarCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.starradar.middleman
+        PRODUCT_BUNDLE_IDENTIFIER: com.goradar.middleman
         INFOPLIST_FILE: App/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         SWIFT_VERSION: "5.0"
@@ -43,10 +43,10 @@ targets:
         CODE_SIGNING_ALLOWED: NO
 
 schemes:
-  StarRadar:
+  GORaDar:
     build:
       targets:
-        StarRadar: all
+        GORaDar: all
     run:
       config: Debug
     archive:

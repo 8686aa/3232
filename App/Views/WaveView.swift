@@ -35,6 +35,7 @@ struct WaveView: View {
     }
 }
 
+/// 上行/下行两条曲线，语义色 + 浅色网格，不做泛光与装饰。
 private enum WavePainter {
 
     static func paint(_ ctx: inout GraphicsContext, size: CGSize, model: WaveModel, now: Date) {
@@ -75,20 +76,12 @@ private enum WavePainter {
         let upPts = (0..<n).map { pt($0, model.upSamples[$0]) }
         let downPts = (0..<n).map { pt($0, model.downSamples[$0]) }
 
-        series(&g, pts: downPts, line: P.DOWN, gradTop: P.VIOLET, plotH: plotH, padT: padT, lineWidth: 1.7)
-        series(&g, pts: upPts, line: P.TEAL, gradTop: P.CYAN, plotH: plotH, padT: padT, lineWidth: 1.7)
+        series(&g, pts: downPts, color: Palette.down, plotH: plotH, padT: padT)
+        series(&g, pts: upPts, color: Palette.up, plotH: plotH, padT: padT)
 
-        // 端点光点
-        let tipUp = upPts[n - 1]
-        let pulse = 5.5 * (1 + 0.35 * sin(CGFloat(now.timeIntervalSinceReferenceDate) * 4))
-        glowDot(&g, at: tipUp, size: pulse * 2, color: P.TEAL)
-        g.fill(Path(ellipseIn: CGRect(x: tipUp.x - 1.3, y: tipUp.y - 1.3, width: 2.6, height: 2.6)),
-               with: .color(P.color(P.alpha(P.TEAL, 0xFF))))
-
-        let tipDown = downPts[n - 1]
-        glowDot(&g, at: tipDown, size: pulse * 2, color: P.DOWN)
-        g.fill(Path(ellipseIn: CGRect(x: tipDown.x - 1.3, y: tipDown.y - 1.3, width: 2.6, height: 2.6)),
-               with: .color(P.color(P.alpha(P.DOWN, 0xFF))))
+        // 端点圆点
+        dot(&g, at: upPts[n - 1], color: Palette.up)
+        dot(&g, at: downPts[n - 1], color: Palette.down)
     }
 
     // MARK: 网格
@@ -98,18 +91,17 @@ private enum WavePainter {
                                  maxValue: CGFloat) {
         for i in 0...4 {
             let y = padT + plotH * CGFloat(i) / 4
-            let solid = (i == 3)
             var line = Path()
             line.move(to: CGPoint(x: padL, y: y))
             line.addLine(to: CGPoint(x: w - padR, y: y))
             ctx.stroke(line,
-                       with: .color(P.color(P.alpha(P.GRID, solid ? 0x33 : 0x1A))),
-                       style: StrokeStyle(lineWidth: 1, dash: solid ? [] : [3, 5]))
+                       with: .color(Color.gray.opacity(0.30)),
+                       style: StrokeStyle(lineWidth: 1, dash: i == 4 ? [] : [3, 4]))
 
             let value = maxValue * (1 - CGFloat(i) / 4)
             ctx.draw(Text(String(format: "%.0f", value))
-                        .font(Fonts.mono(8.5))
-                        .foregroundColor(P.color(P.alpha(P.TXT_MUTE, 0xCC))),
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(Color.secondary),
                      at: CGPoint(x: w - padR + 24, y: y), anchor: .center)
         }
 
@@ -119,20 +111,20 @@ private enum WavePainter {
             line.move(to: CGPoint(x: x, y: padT))
             line.addLine(to: CGPoint(x: x, y: padT + plotH))
             ctx.stroke(line,
-                       with: .color(P.color(P.alpha(P.GRID, 0x17))),
+                       with: .color(Color.gray.opacity(0.18)),
                        style: StrokeStyle(lineWidth: 1, dash: [2, 6]))
         }
 
         ctx.draw(Text("峰值 \(Int(maxValue)) Kbps")
-                    .font(Fonts.mono(9))
-                    .foregroundColor(P.color(P.alpha(P.TXT_MUTE, 0xE6))),
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(Color.secondary),
                  at: CGPoint(x: padL + 2, y: padT - 11), anchor: .leading)
     }
 
-    // MARK: 单条曲线（面积 + 泛光 + 实体）
+    // MARK: 单条曲线（面积 + 实体）
 
-    private static func series(_ ctx: inout GraphicsContext, pts: [CGPoint], line: UInt32,
-                               gradTop: UInt32, plotH: CGFloat, padT: CGFloat, lineWidth: CGFloat) {
+    private static func series(_ ctx: inout GraphicsContext, pts: [CGPoint], color: Color,
+                               plotH: CGFloat, padT: CGFloat) {
         guard pts.count > 1 else { return }
 
         let curve = smoothPath(pts)
@@ -142,15 +134,13 @@ private enum WavePainter {
         area.addLine(to: CGPoint(x: pts[0].x, y: padT + plotH))
         area.closeSubpath()
         ctx.fill(area, with: .linearGradient(Gradient(stops: [
-            .init(color: P.color(P.alpha(gradTop, 0x4D)), location: 0),
-            .init(color: P.color(P.alpha(line, 0x1A)), location: 0.6),
-            .init(color: P.color(P.alpha(gradTop, 0x00)), location: 1)
+            .init(color: color.opacity(0.22), location: 0),
+            .init(color: color.opacity(0), location: 1)
         ]),
         startPoint: CGPoint(x: 0, y: padT),
         endPoint: CGPoint(x: 0, y: padT + plotH)))
 
-        ctx.stroke(curve, with: .color(P.color(P.alpha(line, 0x3D))), lineWidth: lineWidth + 3.3)
-        ctx.stroke(curve, with: .color(P.color(P.alpha(line, 0xF2))), lineWidth: lineWidth)
+        ctx.stroke(curve, with: .color(color), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
     }
 
     /// Catmull-Rom → 三次贝塞尔
@@ -170,14 +160,8 @@ private enum WavePainter {
         return path
     }
 
-    private static func glowDot(_ ctx: inout GraphicsContext, at pt: CGPoint,
-                                size: CGFloat, color: UInt32) {
-        let r = max(size, 1) / 2
-        ctx.fill(Path(ellipseIn: CGRect(x: pt.x - r, y: pt.y - r, width: r * 2, height: r * 2)),
-                 with: .radialGradient(Gradient(stops: [
-                    .init(color: P.color(P.alpha(color, 0x2E)), location: 0),
-                    .init(color: P.color(P.alpha(color, 0x00)), location: 1)
-                 ]),
-                 center: pt, startRadius: 0, endRadius: r))
+    private static func dot(_ ctx: inout GraphicsContext, at pt: CGPoint, color: Color) {
+        ctx.fill(Path(ellipseIn: CGRect(x: pt.x - 3, y: pt.y - 3, width: 6, height: 6)),
+                 with: .color(color))
     }
 }

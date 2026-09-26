@@ -1,5 +1,5 @@
 # XcodeGen 现场生成，不入库
-StarRadar.xcodeproj/
+GORaDar.xcodeproj/
 *.xcodeproj
 *.xcworkspace
 
@@ -14,3 +14,8 @@ Payload/
 # Xcode 本地状态
 xcuserdata/
 *.xcuserstate
+
+# CI 取证产物（日志 / 下载回来的 IPA 压缩包），只留本地
+_ci/
+ci-log.txt
+*.log

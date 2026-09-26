@@ -18,55 +18,36 @@ struct PacketRowView: View {
     let info: PktInfo
 
     var body: some View {
-        HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                .fill(P.color(P.alpha(info.up ? P.TEAL : P.DOWN, 0xCC)))
-                .frame(width: 2.5, height: 22)
+        HStack(spacing: 10) {
+            Image(systemName: info.up ? "arrow.up" : "arrow.down")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(info.up ? Palette.up : Palette.down)
+                .frame(width: 16)
 
-            Text(fmtTime(info.time))
-                .font(Fonts.mono(9.5))
-                .foregroundColor(P.color(P.alpha(P.TXT_MUTE, 0xE6)))
-                .padding(.leading, 9)
-
-            Text(info.up ? "▲" : "▼")
-                .font(Fonts.sans(9))
-                .foregroundColor(P.color(info.up ? P.TEAL : P.DOWN))
-                .padding(.leading, 7)
-
-            Text(shortIp(info.srcIp))
-                .font(Fonts.mono(11))
-                .foregroundColor(P.color(P.alpha(P.TXT, 0xEB)))
-                .padding(.leading, 5)
-
-            Text("→")
-                .font(Fonts.mono(11))
-                .foregroundColor(P.color(P.alpha(P.TXT_DIM, 0x99)))
-                .padding(.leading, 5)
-
-            Text("\(shortIp(info.dstIp)):\(info.dstPort)")
-                .font(Fonts.mono(11))
-                .foregroundColor(P.color(P.alpha(dstColor, 0xEB)))
-                .padding(.leading, 5)
-
-            Text(info.proto)
-                .font(Fonts.mono(9.5))
-                .foregroundColor(P.color(P.alpha(P.TXT_DIM, 0xCC)))
-                .padding(.leading, 5)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(route)
+                    .font(.footnote.monospaced())
+                    .lineLimit(1)
+                Text("\(fmtTime(info.time)) · \(info.proto)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
 
             Spacer(minLength: 4)
 
-            Text("\(info.len)B")
-                .font(Fonts.mono(9.5))
-                .foregroundColor(P.color(P.alpha(P.TXT_MUTE, 0xE6)))
+            if info.target {
+                Text("目标")
+                    .font(.caption2)
+                    .foregroundStyle(Palette.down)
+            }
+
+            Text("\(info.len) B")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
-        .lineLimit(1)
-        .padding(.horizontal, 9)
-        .frame(height: 30)
-        .background(info.target ? P.color(P.alpha(P.AMBER, 0x0F)) : Color.clear)
     }
 
-    private var dstColor: UInt32 {
-        if info.target { return P.AMBER }
-        return info.up ? P.DOWN : P.TEAL
+    private var route: String {
+        "\(shortIp(info.srcIp)) → \(shortIp(info.dstIp)):\(info.dstPort)"
     }
 }
