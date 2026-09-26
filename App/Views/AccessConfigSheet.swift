@@ -9,7 +9,8 @@ import UIKit
 // 「监听端口」）。原先要在游戏设备上逐字段手填，这里按客户端类型一键生成。
 //
 // 按「怎么导入」分两类，不是一家一套格式：
-//   · 分享链接（socks://…) —— Shadowrocket 与 NekoBox 都吃，可扫码或剪贴板导入；
+//   · 分享链接（socks://…) —— Shadowrocket 与 NekoBox 都吃，可扫码或剪贴板导入，
+//     但两家解析方式不同：Shadowrocket 认 base64 形态，NekoBox 只认明文 host:port；
 //   · JSON 配置 —— sing-box 官方 App 只认这个，它不吃分享链接。
 // ============================================================================
 
@@ -42,9 +43,12 @@ enum AccessClient: String, CaseIterable, Identifiable {
     /// 生成出来的配置文本
     func config(for endpoint: AccessEndpoint) -> String {
         switch self {
-        case .shadowrocket, .nekobox:
-            // 两家都认通用的 socks:// 分享链接（NekoBox 1.4.0 起支持扫码导入）
-            return Self.shareLink(endpoint)
+        case .shadowrocket:
+            // Shadowrocket 的 socks 链接是 v2rayN 那一套：socks://base64(host:port)#备注
+            return Self.base64Link(endpoint)
+        case .nekobox:
+            // NekoBox 只认明文：它的 parseSOCKS 直接拿 okhttp HttpUrl 读 host/port
+            return Self.plainLink(endpoint)
         case .singbox:
             // sing-box 官方 App 不吃分享链接，只认完整 JSON：tun 入口 + SOCKS5 出口
             return Self.json(endpoint)
@@ -68,13 +72,25 @@ enum AccessClient: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 通用 SOCKS5 分享链接：socks://<base64(host:port)>#备注。
+    /// v2rayN 形态的 SOCKS5 链接：socks://<base64(host:port)>#备注。
     /// 本机不校验账号密码，所以 userinfo 段直接省掉。
-    private static func shareLink(_ endpoint: AccessEndpoint) -> String {
+    private static func base64Link(_ endpoint: AccessEndpoint) -> String {
         let payload = Data(endpoint.hostPort.utf8).base64EncodedString()
-        let name = endpoint.name
-            .addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? endpoint.name
-        return "socks://\(payload)#\(name)"
+        return "socks://\(payload)#\(fragment(endpoint))"
+    }
+
+    /// 明文形态：socks://host:port#备注。
+    ///
+    /// NekoBox 的 parseSOCKS 是 `("http://" + link).toHttpUrlOrNull()` 之后取
+    /// `url.host` / `url.port`，所以 base64 塞进来会被整个当成主机名（顺带被小写化），
+    /// 端口取不到就落到 HttpUrl 的默认 80 —— 必须给它明文。
+    private static func plainLink(_ endpoint: AccessEndpoint) -> String {
+        "socks://\(endpoint.hostPort)#\(fragment(endpoint))"
+    }
+
+    /// 链接尾部的备注，非 ASCII 要转义
+    private static func fragment(_ endpoint: AccessEndpoint) -> String {
+        endpoint.name.addingPercentEncoding(withAllowedCharacters: .urlFragmentAllowed) ?? endpoint.name
     }
 
     /// sing-box 的 JSON：tun 收全量流量，出口是本机 SOCKS5；内网地址走直连，
